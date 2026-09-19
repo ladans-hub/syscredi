@@ -1,0 +1,5 @@
+{
+  "API_BASE_URL": "https://SEU-BACKEND.vercel.app/v1",
+  "SUPABASE_URL": "https://SEU-PROJECTO.supabase.co",
+  "SUPABASE_PUBLISHABLE_KEY": "sb_publishable_SUBSTITUIR"
+}

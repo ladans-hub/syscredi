@@ -1,0 +1,5 @@
+{
+  "API_BASE_URL": "https://syscredi-backend.vercel.app/v1",
+  "SUPABASE_URL": "https://fpfaczcwlozbguphhoff.supabase.co",
+  "SUPABASE_PUBLISHABLE_KEY": "sb_publishable_bC-1ZfDLYrGdpIQ70BZcGQ_nOsXYcRZ"
+}
