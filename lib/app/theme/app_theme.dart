@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'local_brand_image.dart';
@@ -16,6 +17,12 @@ class BrandPalette {
 class BrandVisuals {
   const BrandVisuals({
     this.logo,
+    this.alternateLogo,
+    this.favicon,
+    this.institutionName,
+    this.institutionBio,
+    this.compactSidebar = false,
+    this.navigationIcons = true,
     this.watermark,
     this.stamp,
     this.signature,
@@ -23,8 +30,21 @@ class BrandVisuals {
     this.heroGradientEnd = const Color(0xFF203B52),
     this.fontScale = 1.0,
     this.fontFamily = 'System',
+    this.watermarkEnabled = true,
+    this.watermarkOpacity = .045,
+    this.watermarkSize = 560,
+    this.watermarkPosition = 'Inferior direito',
+    this.radius = 8,
+    this.density = 'Confortável',
+    this.accent = const Color(0xff0078d4),
   });
 
+  final bool watermarkEnabled;
+  final double watermarkOpacity, watermarkSize, radius;
+  final String watermarkPosition, density;
+  final Color accent;
+  final String? alternateLogo, favicon, institutionName, institutionBio;
+  final bool compactSidebar, navigationIcons;
   final String? logo;
   final String? watermark;
   final String? stamp;
@@ -44,6 +64,19 @@ class BrandVisuals {
     double? fontScale,
     String? fontFamily,
   }) => BrandVisuals(
+    alternateLogo: alternateLogo,
+    favicon: favicon,
+    institutionName: institutionName,
+    institutionBio: institutionBio,
+    compactSidebar: compactSidebar,
+    navigationIcons: navigationIcons,
+    watermarkEnabled: watermarkEnabled,
+    watermarkOpacity: watermarkOpacity,
+    watermarkSize: watermarkSize,
+    watermarkPosition: watermarkPosition,
+    radius: radius,
+    density: density,
+    accent: accent,
     logo: logo ?? this.logo,
     watermark: watermark ?? this.watermark,
     stamp: stamp ?? this.stamp,
@@ -125,6 +158,23 @@ abstract final class AppAssets {
   static const syscrediLogo = 'assets/images/logo.png';
 }
 
+Widget? brandImage(String path, double size) {
+  if (path.startsWith('data:image/')) {
+    try {
+      return Image.memory(
+        base64Decode(path.split(',').last),
+        width: size,
+        height: size,
+        fit: BoxFit.contain,
+        errorBuilder: (_, error, stack) => const SizedBox.shrink(),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+  return localBrandImage(path, size);
+}
+
 class BrandLogo extends StatelessWidget {
   const BrandLogo({this.size = 38, this.fallbackColor, this.color, super.key});
   final double size;
@@ -132,9 +182,15 @@ class BrandLogo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final path = brandVisuals.value.logo;
+    final visuals = brandVisuals.value;
+    final path = size <= 32 && visuals.favicon != null
+        ? visuals.favicon
+        : Theme.of(context).brightness == Brightness.dark &&
+              visuals.alternateLogo != null
+        ? visuals.alternateLogo
+        : visuals.logo;
     if (path != null && path.isNotEmpty) {
-      final image = localBrandImage(path, size);
+      final image = brandImage(path, size);
       if (image != null) return image;
     }
     return Image.asset(
@@ -274,27 +330,20 @@ class BrandWatermarkOverlay extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final visuals = brandVisuals.value;
-    final path = visuals.watermark?.isNotEmpty == true
-        ? visuals.watermark
-        : visuals.logo;
-    final image = path == null || path.isEmpty
-        ? null
-        : localBrandImage(path, 560);
-    final dark = Theme.of(context).brightness == Brightness.dark;
+    if (!visuals.watermarkEnabled) return const SizedBox.shrink();
+    final path = visuals.watermark ?? visuals.logo;
+    final image = path == null ? null : brandImage(path, visuals.watermarkSize);
     return Positioned.fill(
       child: IgnorePointer(
         child: Align(
-          alignment: Alignment.bottomRight,
-          child: Transform.translate(
-            offset: const Offset(120, 120),
-            child: Opacity(
-              opacity: dark ? .075 : .045,
-              child: SizedBox(
-                width: 560,
-                height: 560,
-                child: image ?? const BrandLogo(size: 560),
-              ),
-            ),
+          alignment: switch (visuals.watermarkPosition) {
+            'Centro' => Alignment.center,
+            'Superior esquerdo' => Alignment.topLeft,
+            _ => Alignment.bottomRight,
+          },
+          child: Opacity(
+            opacity: visuals.watermarkOpacity.clamp(0, .15),
+            child: image ?? BrandLogo(size: visuals.watermarkSize),
           ),
         ),
       ),
@@ -312,6 +361,11 @@ ThemeData appTheme(
   );
   return ThemeData(
     useMaterial3: true,
+    visualDensity: switch (brandVisuals.value.density) {
+      'Compacta' => VisualDensity.compact,
+      'Espaçosa' => const VisualDensity(horizontal: 1, vertical: 1),
+      _ => VisualDensity.standard,
+    },
     fontFamily: brandVisuals.value.fontFamily == 'System'
         ? ((defaultTargetPlatform == TargetPlatform.iOS ||
                   defaultTargetPlatform == TargetPlatform.macOS)
@@ -321,6 +375,13 @@ ThemeData appTheme(
     brightness: b,
     colorScheme: scheme.copyWith(
       primary: palette.primary,
+      onPrimary: palette.primary.computeLuminance() > .179
+          ? Colors.black
+          : Colors.white,
+      tertiary: brandVisuals.value.accent,
+      onTertiary: brandVisuals.value.accent.computeLuminance() > .179
+          ? Colors.black
+          : Colors.white,
       secondary: b == Brightness.dark
           ? scheme.onSurfaceVariant
           : palette.secondary,
@@ -366,11 +427,17 @@ ThemeData appTheme(
     ).apply(fontSizeFactor: brandVisuals.value.fontScale),
     cardTheme: CardThemeData(
       elevation: 1,
-      shadowColor: scheme.shadow.withValues(alpha: .08),
+      shadowColor: scheme.shadow.withValues(
+        alpha: b == Brightness.dark ? .24 : .10,
+      ),
       surfaceTintColor: Colors.transparent,
       color: scheme.surface,
       shape: RoundedRectangleBorder(
-        side: BorderSide(color: scheme.outlineVariant),
+        // A barely tinted keyline gives surfaces the crisp layering used by
+        // Fluent without competing with the content inside the card.
+        side: BorderSide(
+          color: Color.lerp(scheme.outlineVariant, scheme.primary, .16)!,
+        ),
         borderRadius: BorderRadius.circular(FluentTokens.radius12),
       ),
     ),
@@ -401,23 +468,23 @@ ThemeData appTheme(
         fontWeight: FontWeight.w700,
       ),
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(FluentTokens.radius8),
+        borderRadius: BorderRadius.circular(brandVisuals.value.radius),
         borderSide: BorderSide(color: scheme.outlineVariant),
       ),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(FluentTokens.radius8),
+        borderRadius: BorderRadius.circular(brandVisuals.value.radius),
         borderSide: BorderSide(color: scheme.outlineVariant),
       ),
       focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(FluentTokens.radius8),
+        borderRadius: BorderRadius.circular(brandVisuals.value.radius),
         borderSide: BorderSide(color: palette.primary, width: 1.5),
       ),
       focusedErrorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(FluentTokens.radius8),
+        borderRadius: BorderRadius.circular(brandVisuals.value.radius),
         borderSide: BorderSide(color: scheme.error, width: 1.5),
       ),
       errorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(FluentTokens.radius8),
+        borderRadius: BorderRadius.circular(brandVisuals.value.radius),
         borderSide: BorderSide(color: scheme.error),
       ),
       errorStyle: const TextStyle(fontSize: 11, height: 1.2),
@@ -448,7 +515,7 @@ ThemeData appTheme(
       style: IconButton.styleFrom(
         fixedSize: const Size(48, 48),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(FluentTokens.radius8),
+          borderRadius: BorderRadius.circular(brandVisuals.value.radius),
         ),
         visualDensity: VisualDensity.standard,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -457,10 +524,12 @@ ThemeData appTheme(
     elevatedButtonTheme: ElevatedButtonThemeData(
       style: ElevatedButton.styleFrom(
         textStyle: const TextStyle(fontWeight: FontWeight.w700),
+        backgroundColor: palette.primary,
+        foregroundColor: b == Brightness.light ? Colors.white : Colors.black,
         minimumSize: const Size(0, 40),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(FluentTokens.radius8),
+          borderRadius: BorderRadius.circular(brandVisuals.value.radius),
         ),
         visualDensity: VisualDensity.standard,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -474,7 +543,7 @@ ThemeData appTheme(
         minimumSize: const Size(0, 40),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(FluentTokens.radius8),
+          borderRadius: BorderRadius.circular(brandVisuals.value.radius),
         ),
         visualDensity: VisualDensity.standard,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -507,7 +576,7 @@ ThemeData appTheme(
           vertical: 17,
         ),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(FluentTokens.radius8),
+          borderRadius: BorderRadius.circular(brandVisuals.value.radius),
           borderSide: BorderSide(color: scheme.outlineVariant),
         ),
       ),
@@ -519,7 +588,7 @@ ThemeData appTheme(
         minimumSize: const Size(0, 40),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(FluentTokens.radius8),
+          borderRadius: BorderRadius.circular(brandVisuals.value.radius),
         ),
         visualDensity: VisualDensity.standard,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -529,11 +598,11 @@ ThemeData appTheme(
       style: FilledButton.styleFrom(
         textStyle: const TextStyle(fontWeight: FontWeight.w700),
         backgroundColor: palette.primary,
-        foregroundColor: scheme.onPrimary,
+        foregroundColor: b == Brightness.light ? Colors.white : Colors.black,
         minimumSize: const Size(0, 40),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(FluentTokens.radius8),
+          borderRadius: BorderRadius.circular(brandVisuals.value.radius),
         ),
         visualDensity: VisualDensity.standard,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,

@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart' hide Icons;
 import 'package:flutter/services.dart';
+import 'package:pdf/widgets.dart' as pw;
 import 'package:syscredi/core/widgets/equal_button_group.dart';
 
 import '../../../app/theme/app_theme.dart';
@@ -16,6 +18,20 @@ import 'navigation.dart';
 import 'search_dialog.dart';
 import 'session_view_model.dart';
 import 'simulator_panel.dart';
+import 'credit_stages.dart';
+import 'portfolio_views.dart';
+import 'report_views.dart';
+import 'credit_products.dart';
+import 'finance_views.dart';
+import 'admin_views.dart';
+import 'plans_view.dart';
+import 'audit_logs_view.dart';
+import '../../settings/application/settings_controller.dart';
+import '../../settings/presentation/institution_settings_view.dart';
+import '../../settings/presentation/institution_branding.dart';
+import '../../../core/widgets/premium_dialog.dart';
+import '../../../core/widgets/operation_feedback.dart';
+import 'risk_center_view.dart';
 
 const _stages = {
   'documentation': 'Documentação',
@@ -24,6 +40,37 @@ const _stages = {
   'approved': 'Aprovado',
   'rejected': 'Recusado',
   'disbursed': 'Desembolsado',
+};
+const _creditStageRoutes = {
+  'financing',
+  'financial-analysis',
+  'credit-approval',
+  'credit-authorization',
+  'credit-disbursement',
+  'credit-status',
+  'credit-restructuring',
+};
+const _reportKinds = <String, String>{
+  'report-pdf': 'Em PDF',
+  'report-excel': 'Em Excel',
+  'report-records': 'Registos',
+  'report-letters': 'Cartas',
+  'report-monthly-bm': 'Mensal para BM',
+  'report-quarterly-bm': 'Trimestral para BM',
+  'report-credits': 'Créditos',
+  'report-clients': 'Clientes',
+  'report-financial': 'Financeiros',
+  'report-misc': 'Diversos',
+};
+const _financeAreas = <String, String>{
+  'finance-balances': 'Saldos',
+  'finance-reversals': 'Estornos',
+  'finance-income': 'Receitas',
+  'finance-expenses': 'Despesas',
+  'finance-disbursements': 'Desembolsos',
+  'finance-refunds': 'Reembolsos',
+  'finance-overdue': 'Prestações Vencidas',
+  'finance-assets': 'Ativos',
 };
 const _roles = {
   'operator': 'Operador',
@@ -129,32 +176,53 @@ class _FluentCardState extends State<_FluentCard> {
       onEnter: (_) => setState(() => hovered = true),
       onExit: (_) => setState(() => hovered = false),
       cursor: SystemMouseCursors.basic,
-      child: Material(
-        color: surface,
-        elevation: hovered ? 2 : 1,
-        shadowColor: scheme.shadow.withValues(alpha: .10),
-        shape: RoundedRectangleBorder(
+      child: AnimatedContainer(
+        duration: FluentTokens.fast,
+        curve: FluentTokens.curve,
+        decoration: BoxDecoration(
+          color: surface,
           borderRadius: BorderRadius.circular(12),
-          side: BorderSide(
-            color: hovered ? border : scheme.outlineVariant,
-            width: hovered ? 1.2 : 1,
+          border: Border.all(
+            color: hovered
+                ? border.withValues(alpha: .72)
+                : Color.lerp(scheme.outlineVariant, border, .14)!,
+            width: hovered ? 1.35 : 1,
           ),
+          boxShadow: [
+            BoxShadow(
+              color: scheme.shadow.withValues(alpha: hovered ? .16 : .09),
+              blurRadius: hovered ? 18 : 10,
+              offset: Offset(0, hovered ? 6 : 3),
+            ),
+            if (hovered)
+              BoxShadow(
+                color: border.withValues(alpha: .08),
+                blurRadius: 2,
+                spreadRadius: 1,
+              ),
+          ],
         ),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: null,
-          overlayColor: WidgetStateProperty.resolveWith((states) {
-            if (states.contains(WidgetState.pressed)) {
-              return scheme.primary.withValues(alpha: .10);
-            }
-            if (states.contains(WidgetState.hovered)) {
-              return scheme.primary.withValues(alpha: .04);
-            }
-            return null;
-          }),
-          child: Padding(
-            padding: const EdgeInsets.all(18),
-            child: widget.child,
+        child: Material(
+          type: MaterialType.transparency,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: null,
+            overlayColor: WidgetStateProperty.resolveWith((states) {
+              if (states.contains(WidgetState.pressed)) {
+                return scheme.primary.withValues(alpha: .10);
+              }
+              if (states.contains(WidgetState.hovered)) {
+                return scheme.primary.withValues(alpha: .04);
+              }
+              return null;
+            }),
+            child: Padding(
+              padding: const EdgeInsets.all(18),
+              child: widget.child,
+            ),
           ),
         ),
       ),
@@ -236,6 +304,52 @@ class _DashboardChartPainter extends CustomPainter {
       oldDelegate.values != values || oldDelegate.primary != primary;
 }
 
+class _DashboardDonutPainter extends CustomPainter {
+  _DashboardDonutPainter(this.primary, this.secondary);
+  final Color primary;
+  final Color secondary;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = size.center(Offset.zero);
+    final radius = size.shortestSide / 2 - 8;
+    final track = Paint()
+      ..color = primary.withValues(alpha: .10)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 14
+      ..strokeCap = StrokeCap.round;
+    canvas.drawCircle(center, radius, track);
+    final first = Paint()
+      ..color = primary
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 14
+      ..strokeCap = StrokeCap.round;
+    final second = Paint()
+      ..color = secondary
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 14
+      ..strokeCap = StrokeCap.round;
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: radius),
+      -math.pi / 2,
+      math.pi * 1.55,
+      false,
+      first,
+    );
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: radius),
+      math.pi * 1.05,
+      math.pi * .55,
+      false,
+      second,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _DashboardDonutPainter oldDelegate) =>
+      oldDelegate.primary != primary || oldDelegate.secondary != secondary;
+}
+
 class Workspace extends StatefulWidget {
   const Workspace({required this.session, this.onTheme, super.key});
   final WorkspaceSession session;
@@ -245,6 +359,25 @@ class Workspace extends StatefulWidget {
 }
 
 class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
+  Future<void> _feedback(
+    String message, {
+    String title = 'Informação',
+    bool? success,
+  }) => showFeedbackDialog(
+    context,
+    title: title,
+    message: message,
+    success: success,
+  );
+  String get _institutionName =>
+      (institutionBranding.value['tradeName'] ?? 'SysCredi')
+          .toString()
+          .trim()
+          .isEmpty
+      ? 'SysCredi'
+      : '${institutionBranding.value['tradeName']}';
+  late final InstitutionSettingsController institutionSettings;
+  final institutionSettingsKey = GlobalKey<InstitutionSettingsViewState>();
   Repository get api => widget.session.api;
   List<_Section> get sections => [
     if (widget.session.manager)
@@ -258,6 +391,37 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     const _Section('co-signers', 'Co-assinantes', Icons.group_outlined),
     const _Section('products', 'Produtos', Icons.category_outlined),
     const _Section('requests', 'Pedidos', Icons.assignment_outlined),
+    const _Section(
+      'financing',
+      'Financiamento',
+      Icons.assignment_turned_in_outlined,
+    ),
+    const _Section(
+      'financial-analysis',
+      'Análise financeira',
+      Icons.analytics_outlined,
+    ),
+    const _Section('credit-approval', 'Aprovar crédito', Icons.check),
+    const _Section(
+      'credit-authorization',
+      'Autorizar crédito',
+      Icons.assignment_turned_in_outlined,
+    ),
+    const _Section(
+      'credit-disbursement',
+      'Desembolso',
+      Icons.payments_outlined,
+    ),
+    const _Section(
+      'credit-status',
+      'Estado do crédito',
+      Icons.analytics_outlined,
+    ),
+    const _Section(
+      'credit-restructuring',
+      'Reestruturação de crédito',
+      Icons.swap_horiz_outlined,
+    ),
     const _Section('loans', 'Carteira', Icons.account_balance_outlined),
     const _Section('contracts', 'Contratos', Icons.description_outlined),
     const _Section('payments', 'Pagamentos', Icons.payments_outlined),
@@ -336,6 +500,15 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    institutionSettings = InstitutionSettingsController(
+      scope:
+          '${widget.session.profile?['organization_id'] ?? widget.session.profile?['id'] ?? 'demo'}',
+      actor: '${widget.session.profile?['name'] ?? 'Gestor'}',
+    );
+    institutionSettings.load().then((_) {
+      if (mounted && institutionSettings.error == null)
+        applyInstitutionSettings(institutionSettings.saved);
+    });
     load();
     // Refresh is triggered on foreground and by the navbar action. A periodic
     // timer would keep Flutter's settle loop alive indefinitely in widget tests.
@@ -352,6 +525,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     generation++;
     timer?.cancel();
     search.dispose();
+    institutionSettings.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -362,6 +536,12 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       loading = true;
       error = null;
     });
+    if (_creditStageRoutes.contains(target) ||
+        target == 'settings' ||
+        target == 'organization-settings') {
+      if (mounted && current == generation) setState(() => loading = false);
+      return;
+    }
     try {
       await widget.session.verify();
       if (!mounted || current != generation) return;
@@ -398,8 +578,14 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     }
   }
 
-  void select(String next) {
+  Future<void> select(String next) async {
     if (busy) return;
+    if ((route == 'settings' || route == 'organization-settings') &&
+        next != route) {
+      final state = institutionSettingsKey.currentState;
+      if (state != null && !await state.requestLeave()) return;
+      if (!mounted) return;
+    }
     setState(() {
       route = next;
       offset = 0;
@@ -418,27 +604,26 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     try {
       await api.write(method, path, body);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Operação confirmada no servidor.')),
+        await _feedback(
+          'Operação confirmada no servidor.',
+          title: 'Operação confirmada',
+          success: true,
         );
       }
     } on ApiFailure catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(e.message),
-            duration: const Duration(seconds: 8),
-          ),
+        await _feedback(
+          e.message,
+          title: 'Operação não confirmada',
+          success: false,
         );
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Não foi possível confirmar. Consulte Pendências antes de repetir.',
-            ),
-          ),
+        await _feedback(
+          'Não foi possível confirmar. Consulte Pendências antes de repetir.',
+          title: 'Operação não confirmada',
+          success: false,
         );
       }
     } finally {
@@ -706,16 +891,20 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         });
       }
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('CSV importado no servidor.')),
+        await _feedback(
+          'CSV importado no servidor.',
+          title: 'Importação concluída',
+          success: true,
         );
       }
       await load();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('$e')));
+        await _feedback(
+          '$e',
+          title: 'Importação não concluída',
+          success: false,
+        );
       }
     } finally {
       input.dispose();
@@ -1107,9 +1296,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('$e')));
+        await _feedback('$e', title: 'Operação não concluída', success: false);
       }
     }
   }
@@ -1170,130 +1357,31 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   }) => showDialog<void>(
     context: context,
     builder: (dialogContext) {
-      final scheme = Theme.of(dialogContext).colorScheme;
-      final scalarEntries = row.entries
-          .where((entry) => entry.value is! Map && entry.value is! List)
-          .where((entry) => entry.key != 'id')
-          .toList();
-      return Dialog(
-        insetPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        clipBehavior: Clip.antiAlias,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 920, maxHeight: 720),
-          child: Column(
-            children: [
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.fromLTRB(24, 20, 16, 20),
-                color: scheme.surfaceContainerHighest,
-                child: Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 22,
-                      backgroundColor: scheme.primary.withValues(alpha: .12),
-                      child: Icon(
-                        row['legal_name'] != null
-                            ? Icons.business_outlined
-                            : Icons.person,
-                        color: scheme.primary,
-                      ),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            title,
-                            style: Theme.of(dialogContext).textTheme.titleLarge
-                                ?.copyWith(fontWeight: FontWeight.w700),
-                          ),
-                          Text(
-                            '${row['name'] ?? row['legal_name'] ?? row['trading_name'] ?? 'Registo'}',
-                            style: Theme.of(dialogContext).textTheme.bodyMedium
-                                ?.copyWith(color: scheme.onSurfaceVariant),
-                          ),
-                        ],
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: 'Fechar',
-                      onPressed: () => Navigator.pop(dialogContext),
-                      icon: const Icon(Icons.close),
-                    ),
-                  ],
-                ),
+      return PremiumDialog(
+        title: Text(title),
+        subtitle:
+            '${row['name'] ?? row['legal_name'] ?? row['trading_name'] ?? 'Registo'} · ${row['id'] ?? ''}',
+        icon: row['legal_name'] != null
+            ? Icons.business_outlined
+            : Icons.person,
+        width: 900,
+        content: DetailFields(
+          fields: [
+            for (final entry in row.entries.where(
+              (e) => e.value is! Map && e.value is! List && e.key != 'id',
+            ))
+              (
+                _labels[entry.key] ?? entry.key,
+                display(entry.key, entry.value),
               ),
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(24),
-                  child: Table(
-                    columnWidths: const {
-                      0: FlexColumnWidth(1.1),
-                      1: FlexColumnWidth(2),
-                    },
-                    border: TableBorder(
-                      horizontalInside: BorderSide(color: Colors.transparent),
-                    ),
-                    children: [
-                      for (var index = 0; index < scalarEntries.length; index++)
-                        TableRow(
-                          decoration: BoxDecoration(
-                            color: index.isEven
-                                ? scheme.surfaceContainerLow
-                                : scheme.surface,
-                          ),
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 13,
-                              ),
-                              child: Text(
-                                _labels[scalarEntries[index].key] ??
-                                    scalarEntries[index].key,
-                                style: TextStyle(
-                                  color: scheme.onSurfaceVariant,
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 13,
-                              ),
-                              child: SelectableText(
-                                display(
-                                  scalarEntries[index].key,
-                                  scalarEntries[index].value,
-                                ),
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
-                child: Align(
-                  alignment: Alignment.centerRight,
-                  child: FilledButton(
-                    onPressed: () => Navigator.pop(dialogContext),
-                    child: const Text('Fechar'),
-                  ),
-                ),
-              ),
-            ],
-          ),
+          ],
         ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Concluir'),
+          ),
+        ],
       );
     },
   );
@@ -1302,19 +1390,15 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     try {
       await api.retry(operation);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Resultado confirmado. Actualize a carteira para consultar o saldo.',
-            ),
-          ),
+        await _feedback(
+          'Resultado confirmado. Actualize a carteira para consultar o saldo.',
+          title: 'Resultado confirmado',
+          success: true,
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('$e')));
+        await _feedback('$e', title: 'Operação não concluída', success: false);
       }
     } finally {
       if (mounted) {
@@ -1354,21 +1438,21 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     try {
       final status = await api.cancel(operation);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              status == 'confirmed'
-                  ? 'A operação já foi concluída. Consulte os dados actualizados.'
-                  : 'Cancelamento confirmado. A operação não será executada.',
-            ),
-          ),
+        await _feedback(
+          status == 'confirmed'
+              ? 'A operação já foi concluída. Consulte os dados actualizados.'
+              : 'Cancelamento confirmado. A operação não será executada.',
+          title: 'Operação cancelada',
+          success: true,
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('$e')));
+        await _feedback(
+          '$e',
+          title: 'Cancelamento não concluído',
+          success: false,
+        );
       }
     } finally {
       if (mounted) {
@@ -1458,6 +1542,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
               crossAxisSpacing: 22,
               mainAxisSpacing: 22,
               childAspectRatio: viewport.maxWidth < 540 ? 2.2 : 1.52,
+              mainAxisExtent: viewport.maxWidth < 540 ? 160 : 154,
               children: [
                 _remoteKpi(
                   'Créditos concedidos',
@@ -1512,7 +1597,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                   'Pedidos pendentes',
                   pendingRequests,
                   'aguardam decisão',
-                  Icons.description_outlined,
+                  Icons.assignment_turned_in_outlined,
                   scheme.tertiary,
                 ),
               ],
@@ -1569,27 +1654,34 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
 
   Widget _dashboardSplit(double width) {
     final scheme = Theme.of(context).colorScheme;
-    return GridView.count(
-      crossAxisCount: width >= 900 ? 2 : 1,
-      crossAxisSpacing: 18,
-      mainAxisSpacing: 18,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      childAspectRatio: width >= 900 ? 1.65 : 1.8,
+    final pending = SizedBox(
+      height: 360,
+      child: _projectionCard('Projecção pendente', scheme.error, [
+        ('Capital a ser devolvido', '296.840,00 MZN', .77),
+        ('Juros a ser devolvido', '87.152,00 MZN', .23),
+        ('Mora a ser paga', '0,00 MZN', .04),
+        ('Total a ser pago', '383.992,00 MZN', 1),
+      ]),
+    );
+    final paid = SizedBox(
+      height: 360,
+      child: _projectionCard('Projecção paga', scheme.secondary, [
+        ('Capital pago', '33.101,40 MZN', .52),
+        ('Juros pago', '26.764,95 MZN', .42),
+        ('Mora paga', '3.959,65 MZN', .06),
+        ('Multa paga', '0,00 MZN', .01),
+        ('Total pago', '63.826,00 MZN', 1),
+      ]),
+    );
+    if (width < 900) {
+      return Column(children: [pending, const SizedBox(height: 18), paid]);
+    }
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _projectionCard('Projecção pendente', scheme.error, [
-          ('Capital a ser devolvido', '296.840,00 MZN'),
-          ('Juros a ser devolvido', '87.152,00 MZN'),
-          ('Mora a ser paga', '0,00 MZN'),
-          ('Total a ser pago', '383.992,00 MZN'),
-        ]),
-        _projectionCard('Projecção paga', scheme.secondary, [
-          ('Capital pago', '33.101,40 MZN'),
-          ('Juros pago', '26.764,95 MZN'),
-          ('Mora paga', '3.959,65 MZN'),
-          ('Multa paga', '0,00 MZN'),
-          ('Total pago', '63.826,00 MZN'),
-        ]),
+        Expanded(child: pending),
+        const SizedBox(width: 18),
+        Expanded(child: paid),
       ],
     );
   }
@@ -1597,24 +1689,57 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   Widget _projectionCard(
     String title,
     Color color,
-    List<(String, String)> values,
+    List<(String, String, double)> values,
   ) => _surface(
     Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          title.toUpperCase(),
-          style: TextStyle(
-            color: color,
-            fontSize: 13,
-            fontWeight: FontWeight.w800,
-            letterSpacing: .4,
-          ),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                title.toUpperCase(),
+                style: TextStyle(
+                  color: color,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: .5,
+                ),
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: .10),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    title.contains('paga')
+                        ? Icons.check_circle_outline
+                        : Icons.history,
+                    size: 13,
+                    color: color,
+                  ),
+                  const SizedBox(width: 5),
+                  Text(
+                    title.contains('paga') ? 'Liquidado' : 'Em aberto',
+                    style: TextStyle(
+                      color: color,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 10),
         for (final value in values)
           Padding(
-            padding: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.only(bottom: 10),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -1643,10 +1768,10 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                 ClipRRect(
                   borderRadius: BorderRadius.circular(9),
                   child: LinearProgressIndicator(
-                    value: .72,
-                    minHeight: 7,
+                    value: value.$3,
+                    minHeight: value.$1.startsWith('Total') ? 8 : 6,
                     backgroundColor: color.withValues(alpha: .10),
-                    color: color,
+                    valueColor: AlwaysStoppedAnimation(color),
                   ),
                 ),
               ],
@@ -1658,41 +1783,53 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
 
   Widget _dashboardPanels(double width) {
     final scheme = Theme.of(context).colorScheme;
-    return GridView.count(
-      crossAxisCount: width >= 1050
-          ? 3
-          : width >= 650
-          ? 2
-          : 1,
-      crossAxisSpacing: 18,
-      mainAxisSpacing: 18,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      childAspectRatio: width >= 1050 ? 1.05 : 0.9,
+    final cardWidth = width >= 1150
+        ? 350.0
+        : width >= 730
+        ? 350.0
+        : width;
+    Widget fixed(Widget child) =>
+        SizedBox(width: cardWidth, height: 360, child: child);
+    return Wrap(
+      spacing: 18,
+      runSpacing: 18,
       children: [
-        _riskPanel(),
-        _listPanel('Reembolso mensal', [
-          ('Júlio Custódio', '900,00 MZN'),
-          ('Silvério João Muaquiqua', '3.250,00 MZN'),
-          ('Francisco Adelino Rui', '3.250,00 MZN'),
-          ('Agostinho Querino', '5.200,00 MZN'),
-        ], scheme.secondary),
-        _listPanel('Desembolso mensal', [
-          ('Pascoal João Muaquiquia', '3.000,00 MZN'),
-          ('Armando Manuel António', '5.000,00 MZN'),
-          ('Júlio Custódio', '2.500,00 MZN'),
-          ('Edson Mário Morais', '1.000,00 MZN'),
-        ], scheme.error),
-        _listPanel('Gestão de logs', [
-          ('Naveia Muaquiquia João', 'login'),
-          ('Naveia Muaquiquia João', 'logout'),
-          ('Loide Janeth Ligia', 'submissão'),
-          ('Loide Janeth Ligia', 'login'),
-        ], scheme.primary),
-        _distributionPanel('Distribuição das contas', Icons.bar_chart_rounded),
-        _distributionPanel(
-          'Distribuição dos clientes',
-          Icons.pie_chart_outline_rounded,
+        fixed(_riskPanel()),
+        fixed(
+          _listPanel('Reembolso mensal', [
+            ('Júlio Custódio', '900,00 MZN'),
+            ('Silvério João Muaquiqua', '3.250,00 MZN'),
+            ('Francisco Adelino Rui', '3.250,00 MZN'),
+            ('Agostinho Querino', '5.200,00 MZN'),
+          ], scheme.secondary),
+        ),
+        fixed(
+          _listPanel('Desembolso mensal', [
+            ('Pascoal João Muaquiquia', '3.000,00 MZN'),
+            ('Armando Manuel António', '5.000,00 MZN'),
+            ('Júlio Custódio', '2.500,00 MZN'),
+            ('Edson Mário Morais', '1.000,00 MZN'),
+          ], scheme.error),
+        ),
+        fixed(
+          _listPanel('Gestão de logs', [
+            ('Naveia Muaquiquia João', 'login'),
+            ('Naveia Muaquiquia João', 'logout'),
+            ('Loide Janeth Ligia', 'submissão'),
+            ('Loide Janeth Ligia', 'login'),
+          ], scheme.primary),
+        ),
+        fixed(
+          _distributionPanel(
+            'Distribuição das contas',
+            Icons.bar_chart_rounded,
+          ),
+        ),
+        fixed(
+          _distributionPanel(
+            'Distribuição dos clientes',
+            Icons.pie_chart_outline_rounded,
+          ),
         ),
       ],
     );
@@ -1713,6 +1850,21 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                 fontWeight: FontWeight.w800,
                 color: Theme.of(context).colorScheme.onSurface,
               ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Icon(Icons.shield, size: 14, color: scheme.tertiary),
+                const SizedBox(width: 6),
+                Text(
+                  '6 faixas monitorizadas',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: scheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 18),
             for (final item in [
@@ -1835,26 +1987,82 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
             color: Theme.of(context).colorScheme.onSurface,
           ),
         ),
-        const Spacer(),
-        Center(
-          child: Icon(
-            icon,
-            size: 76,
-            color: Theme.of(context).colorScheme.primary,
-          ),
-        ),
-        const Spacer(),
-        Center(
-          child: Text(
-            'Masculino 79,8%  ·  Feminino 17,2%',
-            style: TextStyle(
-              fontSize: 11,
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
+        const SizedBox(height: 12),
+        Expanded(
+          child: Row(
+            children: [
+              SizedBox(
+                width: 112,
+                height: 112,
+                child: CustomPaint(
+                  painter: _DashboardDonutPainter(
+                    Theme.of(context).colorScheme.primary,
+                    Theme.of(context).colorScheme.tertiary,
+                  ),
+                  child: Center(
+                    child: Icon(
+                      icon,
+                      size: 22,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _distributionLegend(
+                      'Masculino',
+                      '79,8%',
+                      Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(height: 12),
+                    _distributionLegend(
+                      'Feminino',
+                      '17,2%',
+                      Theme.of(context).colorScheme.tertiary,
+                    ),
+                    const SizedBox(height: 12),
+                    _distributionLegend(
+                      'Outro',
+                      '3,0%',
+                      Theme.of(context).colorScheme.outline,
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       ],
     ),
+  );
+
+  Widget _distributionLegend(String label, String value, Color color) => Row(
+    children: [
+      Container(
+        width: 8,
+        height: 8,
+        decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+      ),
+      const SizedBox(width: 8),
+      Expanded(
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ),
+      Text(
+        value,
+        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
+      ),
+    ],
   );
 
   Widget _chartPanel(
@@ -1997,7 +2205,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
               child: ColoredBox(color: accent),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(18, 18, 16, 18),
+              padding: const EdgeInsets.fromLTRB(16, 12, 14, 12),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -2005,8 +2213,8 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                   Row(
                     children: [
                       Container(
-                        width: 36,
-                        height: 36,
+                        width: 32,
+                        height: 32,
                         decoration: BoxDecoration(
                           color: accent.withValues(alpha: .12),
                           borderRadius: BorderRadius.circular(8),
@@ -2081,119 +2289,137 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       if (location == null) return;
       await XFile.fromData(bytes, mimeType: mimeType).saveTo(location.path);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Relatório guardado em ${location.path}')),
+        await _feedback(
+          'Relatório guardado em ${location.path}',
+          title: 'Relatório guardado',
+          success: true,
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Não foi possível gerar o relatório: $e')),
+        await _feedback(
+          'Não foi possível gerar o relatório: $e',
+          title: 'Relatório não gerado',
+          success: false,
         );
       }
     }
   }
 
-  Widget _settingsBody() {
-    final visuals = brandVisuals.value;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Definições',
-          style: Theme.of(
-            context,
-          ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          'Personalize o espaço de gestão da sua instituição.',
-          style: Theme.of(context).textTheme.bodyMedium,
-        ),
-        const SizedBox(height: 24),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _body() {
+    if (route == 'risk-scores') {
+      if (error != null) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Não foi possível carregar a Central de risco.'),
+            const SizedBox(height: 12),
+            OutlinedButton(
+              onPressed: loading ? null : load,
+              child: const Text('Tentar novamente'),
+            ),
+          ],
+        );
+      }
+      if (loading && rows.isEmpty)
+        return const Center(child: Text('A carregar avaliações de risco…'));
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          RiskCenterView(rows: rows),
+          if (offset > 0 || rows.length == 50)
+            Wrap(
+              spacing: 12,
               children: [
-                const Text(
-                  'Aparência',
-                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                OutlinedButton(
+                  onPressed: !loading && offset > 0
+                      ? () {
+                          offset -= 50;
+                          load();
+                        }
+                      : null,
+                  child: const Text('Registos anteriores'),
                 ),
-                const SizedBox(height: 16),
-                Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
-                  children: [
-                    for (final mode in [
-                      ThemeMode.system,
-                      ThemeMode.light,
-                      ThemeMode.dark,
-                    ])
-                      ChoiceChip(
-                        label: Text(
-                          mode == ThemeMode.system
-                              ? 'Sistema'
-                              : mode == ThemeMode.light
-                              ? 'Claro'
-                              : 'Escuro',
-                        ),
-                        selected: themeMode.value == mode,
-                        onSelected: (_) {
-                          themeMode.value = mode;
-                          widget.onTheme?.call(mode);
-                          setState(() {});
-                        },
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 20),
-                const Text(
-                  'Fonte do sistema ou fonte premium',
-                  style: TextStyle(fontWeight: FontWeight.w600),
-                ),
-                const SizedBox(height: 10),
-                DropdownButtonFormField<String>(
-                  initialValue: visuals.fontFamily,
-                  items: const [
-                    DropdownMenuItem(value: 'System', child: Text('Sistema')),
-                    DropdownMenuItem(value: 'Poppins', child: Text('Poppins')),
-                    DropdownMenuItem(value: 'Inter', child: Text('Inter')),
-                    DropdownMenuItem(value: 'Geist', child: Text('Geist')),
-                    DropdownMenuItem(value: 'Manrope', child: Text('Manrope')),
-                  ],
-                  onChanged: (v) {
-                    if (v != null) {
-                      brandVisuals.value = visuals.copyWith(fontFamily: v);
-                      setState(() {});
-                    }
-                  },
+                OutlinedButton(
+                  onPressed: !loading && rows.length == 50
+                      ? () {
+                          offset += 50;
+                          load();
+                        }
+                      : null,
+                  child: const Text('Próximos registos'),
                 ),
               ],
             ),
-          ),
-        ),
-        const SizedBox(height: 16),
-        Card(
-          child: ListTile(
-            leading: const Icon(Icons.image_outlined),
-            title: const Text('Logo e marca d’água'),
-            subtitle: Text(
-              visuals.logo == null
-                  ? 'Usando o logo SysCredi'
-                  : 'Logo institucional configurado',
+        ],
+      );
+    }
+    if (route == 'audit') {
+      return Column(
+        children: [
+          AuditLogsView(rows: rows),
+          if (offset > 0 || rows.length == 50)
+            Padding(
+              padding: const EdgeInsets.only(top: 16),
+              child: Wrap(
+                spacing: 12,
+                children: [
+                  OutlinedButton(
+                    onPressed: !loading && offset > 0
+                        ? () {
+                            offset -= 50;
+                            load();
+                          }
+                        : null,
+                    child: const Text('50 registos anteriores'),
+                  ),
+                  OutlinedButton(
+                    onPressed: !loading && rows.length == 50
+                        ? () {
+                            offset += 50;
+                            load();
+                          }
+                        : null,
+                    child: const Text('Carregar próximos registos'),
+                  ),
+                ],
+              ),
             ),
-            trailing: const Icon(Icons.chevron_right),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _body() {
-    if (route == 'settings' || route == 'organization-settings')
-      return _settingsBody();
+        ],
+      );
+    }
+    if (route == 'credit-portfolio' ||
+        route == 'loans' ||
+        route == 'contracts' ||
+        route == 'portfolio') {
+      return const PortfolioView();
+    }
+    if (route == 'collections' || route == 'payments' || route == 'receipts') {
+      return const CollectionsView();
+    }
+    if (route == 'products') return const CreditProductsView();
+    if (route.startsWith('finance-'))
+      return FinanceView(
+        key: ValueKey(route),
+        area: _financeAreas[route] ?? 'Saldos',
+      );
+    if (route.startsWith('report-')) {
+      return ReportView(kind: _reportKinds[route] ?? 'Créditos');
+    }
+    if (route.startsWith('admin-')) {
+      return AdminView(kind: route.substring(6), key: ValueKey(route));
+    }
+    if (route == 'plans') return const PlansView();
+    if (_creditStageRoutes.contains(route)) {
+      return CreditStagesView(stage: route);
+    }
+    if (route == 'settings' || route == 'organization-settings') {
+      return InstitutionSettingsView(
+        key: institutionSettingsKey,
+        controller: institutionSettings,
+        canAdminister: widget.session.manager,
+      );
+    }
     if ({
       'clients',
       'businesses',
@@ -2555,7 +2781,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         await Clipboard.setData(
           ClipboardData(
             text:
-                'SysCredi — Recibo ${row['id']}\nPagamento: ${row['payment_id']}\nMontante: ${money(row['amount_cents'])}\nEmitido: ${row['created_at']}',
+                '$_institutionName — Recibo ${row['id']}\nPagamento: ${row['payment_id']}\nMontante: ${money(row['amount_cents'])}\nEmitido: ${row['created_at']}',
           ),
         );
     }
@@ -2599,9 +2825,11 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       }
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('$error')));
+        await _feedback(
+          '$error',
+          title: 'Operação não concluída',
+          success: false,
+        );
       }
     }
   }
@@ -2881,6 +3109,11 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                                     onPressed: () => kyc(row),
                                   ),
                                   _tableActionButton(
+                                    tooltip: 'Contratos e documentos',
+                                    icon: Icons.receipt_long_outlined,
+                                    onPressed: () => _clientDocuments(row),
+                                  ),
+                                  _tableActionButton(
                                     tooltip: 'Remover cliente',
                                     icon: Icons.delete_sweep_outlined,
                                     destructive: true,
@@ -3085,6 +3318,109 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _clientDocuments(Json row) async {
+    final name = '${row['name'] ?? 'Cliente'}';
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Documentos de $name'),
+        content: SizedBox(
+          width: 460,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _documentAction(
+                dialogContext,
+                'Contrato de crédito',
+                'contrato.pdf',
+              ),
+              _documentAction(
+                dialogContext,
+                'Contrato de confissão de dívida',
+                'contrato_confissao.pdf',
+              ),
+              _documentAction(
+                dialogContext,
+                'Contrato de garantia',
+                'contrato_de_garantia.pdf',
+              ),
+              _documentAction(
+                dialogContext,
+                'Estado do crédito',
+                'credito_estado.pdf',
+              ),
+              _documentAction(
+                dialogContext,
+                'Recibo de desembolso',
+                'recibo_de_desembolso.pdf',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _documentAction(
+    BuildContext dialogContext,
+    String label,
+    String filename,
+  ) => ListTile(
+    leading: const Icon(FluentSystemIcons.picture_as_pdf_outlined),
+    title: Text(label),
+    subtitle: Text(filename),
+    trailing: const Icon(FluentSystemIcons.download),
+    onTap: () {
+      Navigator.pop(dialogContext);
+      _downloadClientDocument(label, filename);
+    },
+  );
+
+  Future<void> _downloadClientDocument(String title, String filename) async {
+    try {
+      final location = await getSaveLocation(suggestedName: filename);
+      if (location == null) return;
+      final document = pw.Document();
+      final branding = InstitutionDocument();
+      document.addPage(
+        pw.MultiPage(
+          pageTheme: branding.pageTheme(),
+          header: branding.header,
+          footer: branding.footer,
+          build: (_) => [
+            pw.SizedBox(height: 24),
+            pw.Text(
+              title,
+              style: pw.TextStyle(fontSize: 22, fontWeight: pw.FontWeight.bold),
+            ),
+            pw.SizedBox(height: 18),
+            pw.Text('Documento de demonstração'),
+            branding.signature('Comprovativo'),
+          ],
+        ),
+      );
+      await XFile.fromData(
+        await document.save(),
+        mimeType: 'application/pdf',
+      ).saveTo(location.path);
+      if (mounted) {
+        await _feedback(
+          'PDF guardado em ${location.path}',
+          title: 'PDF guardado',
+          success: true,
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        await _feedback(
+          'Não foi possível guardar o PDF: $error',
+          title: 'PDF não guardado',
+          success: false,
+        );
+      }
+    }
+  }
+
   Future<void> _removeClientRecord(
     Json row, {
     String resource = 'clients',
@@ -3207,13 +3543,24 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     'co-signers' ||
     'client-guarantors' => Area.clients,
     'requests' => Area.applications,
-    'loans' || 'contracts' => Area.portfolio,
-    'payments' || 'receipts' => Area.collections,
+    'financing' => Area.creditFinancing,
+    'financial-analysis' => Area.financialAnalysis,
+    'credit-approval' => Area.creditApproval,
+    'credit-authorization' => Area.creditAuthorization,
+    'credit-disbursement' => Area.creditDisbursement,
+    'credit-status' => Area.creditStatus,
+    'credit-restructuring' => Area.creditRestructuring,
+    'credit-portfolio' ||
+    'loans' ||
+    'contracts' ||
+    'portfolio' => Area.portfolio,
+    'collections' || 'payments' || 'receipts' => Area.collections,
     'risk-scores' || 'aml-alerts' || 'field-visits' || 'documents' => Area.risk,
     'accounts' || 'account-transfers' => Area.accounts,
     'cash-entries' || 'reconciliations' || 'journal' => Area.treasury,
     'reports' => Area.reports,
     'audit' => Area.audit,
+    'plans' => Area.plans,
     'settings' || 'organization-settings' => Area.settings,
     _ => Area.dashboard,
   };
@@ -3223,14 +3570,27 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     Area.products => 'products',
     Area.clients => 'clients',
     Area.applications => 'requests',
-    Area.portfolio => 'loans',
-    Area.collections => 'payments',
+    Area.creditFinancing => 'financing',
+    Area.financialAnalysis => 'financial-analysis',
+    Area.creditApproval => 'credit-approval',
+    Area.creditAuthorization => 'credit-authorization',
+    Area.creditDisbursement => 'credit-disbursement',
+    Area.creditStatus => 'credit-status',
+    Area.creditRestructuring => 'credit-restructuring',
+    Area.portfolio => 'credit-portfolio',
+    Area.collections => 'collections',
     Area.risk => 'risk-scores',
     Area.accounts => 'accounts',
     Area.treasury => 'cash-entries',
     Area.reports => 'reports',
     Area.audit => 'audit',
     Area.settings => 'settings',
+    Area.accounting => 'admin-accounting',
+    Area.sync => 'admin-sync',
+    Area.aml => 'admin-aml',
+    Area.users => 'admin-users',
+    Area.backup => 'admin-backup',
+    Area.plans => 'plans',
     _ => 'dashboard',
   };
 
@@ -3248,6 +3608,28 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   }
 
   void _selectSubmodule(String label) {
+    String? financeRoute;
+    for (final entry in _financeAreas.entries) {
+      if (entry.value == label) {
+        financeRoute = entry.key;
+        break;
+      }
+    }
+    if (financeRoute != null) {
+      select(financeRoute);
+      return;
+    }
+    String? reportRoute;
+    for (final entry in _reportKinds.entries) {
+      if (entry.value == label) {
+        reportRoute = entry.key;
+        break;
+      }
+    }
+    if (reportRoute != null) {
+      select(reportRoute);
+      return;
+    }
     if (label == 'Utilizadores') {
       select('users');
       return;
@@ -3372,7 +3754,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                                     ?.copyWith(fontWeight: FontWeight.w800),
                               ),
                               Text(
-                                'Gerencie os seus dados de acesso ao SysCredi',
+                                'Gerencie os seus dados de acesso ao $_institutionName',
                                 style: TextStyle(
                                   color: scheme.onSurfaceVariant,
                                 ),
@@ -3494,30 +3876,36 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       if (changes == null || !mounted) return;
       if (profile['guest'] == true) {
         profile.addAll(changes);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Perfil actualizado nesta sessão.')),
+        await _feedback(
+          'Perfil actualizado nesta sessão.',
+          title: 'Perfil actualizado',
+          success: true,
         );
         return;
       }
       await api.write('PATCH', '/me', changes);
       await widget.session.verify();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Perfil actualizado com sucesso.')),
+        await _feedback(
+          'Perfil actualizado com sucesso.',
+          title: 'Perfil actualizado',
+          success: true,
         );
       }
     } on ApiFailure catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
+        await _feedback(
+          error.message,
+          title: 'Perfil não actualizado',
+          success: false,
+        );
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Não foi possível actualizar o perfil.'),
-          ),
+        await _feedback(
+          'Não foi possível actualizar o perfil.',
+          title: 'Perfil não actualizado',
+          success: false,
         );
       }
     } finally {
@@ -3658,11 +4046,13 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
             ),
         ],
       ),
-      onSelected: (value) {
+      onSelected: (value) async {
         if (value == 'pending') select('pending');
         if (value == 'read') {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Notificações marcadas como lidas.')),
+          await _feedback(
+            'Notificações marcadas como lidas.',
+            title: 'Notificações actualizadas',
+            success: true,
           );
         }
       },
@@ -3864,7 +4254,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                                     ),
                                     const SizedBox(height: 3),
                                     Text(
-                                      'Escolha como o SysCredi é apresentado',
+                                      'Escolha como o $_institutionName é apresentado',
                                       style: TextStyle(
                                         color: Theme.of(
                                           context,
@@ -3937,11 +4327,6 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                                 ),
                             ];
                           },
-                        ),
-                        IconButton(
-                          tooltip: 'Definições',
-                          onPressed: busy ? null : () => select('settings'),
-                          icon: const Icon(FluentSystemIcons.settings),
                         ),
                         const SizedBox(width: 12),
                         PopupMenuButton<String>(
@@ -4162,6 +4547,11 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                               'simulator',
                               'reports',
                               'pending',
+                              'audit',
+                              'settings',
+                              'organization-settings',
+                              'risk-scores',
+                              'plans',
                             ].contains(route))
                               Padding(
                                 padding: const EdgeInsets.symmetric(

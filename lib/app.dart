@@ -4,17 +4,17 @@ import 'app/bootstrap/root.dart';
 import 'app/theme/app_theme.dart';
 import 'app/theme/fluent_design.dart';
 
-class SysCrediApp extends StatelessWidget {
-  const SysCrediApp({super.key});
+class SyscrediApp extends StatelessWidget {
+  const SyscrediApp({super.key});
   @override
-  Widget build(BuildContext context) => ValueListenableBuilder<ThemeMode>(
-    valueListenable: themeMode,
-    builder: (context, mode, _) => MaterialApp(
-      title: 'SysCredi',
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: Listenable.merge([themeMode, brandPalette, brandVisuals]),
+    builder: (context, _) => MaterialApp(
+      title: 'Syscredi',
       debugShowCheckedModeBanner: false,
       theme: appTheme(Brightness.light, brandPalette.value),
       darkTheme: appTheme(Brightness.dark, brandPalette.value),
-      themeMode: mode,
+      themeMode: themeMode.value,
       builder: (context, child) => fluent.FluentTheme(
         data: fluentTheme(
           Theme.of(context).brightness,

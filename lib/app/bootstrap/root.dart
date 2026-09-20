@@ -56,7 +56,7 @@ class _RootState extends State<Root> {
       }
       final session = snapshot.data!;
       assert(() {
-        debugPrint('SysCredi auth screen: callback=${session.profile == null}');
+        debugPrint('Syscredi auth screen: callback=${session.profile == null}');
         return true;
       }());
       return ListenableBuilder(
@@ -98,7 +98,7 @@ class _ConnectionError extends StatelessWidget {
               const Icon(FluentSystemIcons.error, size: 52),
               const SizedBox(height: 18),
               const Text(
-                'Não foi possível ligar ao SysCredi',
+                'Não foi possível ligar ao Syscredi',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
               ),

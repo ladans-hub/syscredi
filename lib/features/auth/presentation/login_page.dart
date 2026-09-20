@@ -357,7 +357,7 @@ class _LoginPageState extends State<LoginPage> {
                     const BrandLogo(size: 38, fallbackColor: _loginGreen),
                     const SizedBox(width: 12),
                     Text(
-                      'SysCredi',
+                      'Syscredi',
                       style: TextStyle(
                         color: Colors.white,
                         fontSize: 28,
@@ -467,7 +467,7 @@ class _LoginPageState extends State<LoginPage> {
               const BrandLogo(size: 30),
               SizedBox(width: 9),
               Text(
-                'SysCredi',
+                      'Syscredi',
                 style: TextStyle(
                   color: Theme.of(context).colorScheme.onSurface,
                   fontSize: 25,
@@ -631,7 +631,7 @@ class _LoginPageState extends State<LoginPage> {
         const SizedBox(height: 42),
         const Center(
           child: Text(
-            'SysCredi • Gestão de crédito em Moçambique',
+            'Syscredi • Gestão de crédito em Moçambique',
             style: TextStyle(fontSize: 11),
           ),
         ),

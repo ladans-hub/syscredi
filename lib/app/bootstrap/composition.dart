@@ -11,7 +11,7 @@ Future<AppSession> connect(AppConfig config) async {
   // Keep the selected endpoint observable in debug logs when diagnosing a
   // stale desktop bundle; no credential or token is emitted.
   assert(() {
-    debugPrint('SysCredi API endpoint configured: ${config.apiUrl}');
+    debugPrint('Syscredi API endpoint configured: ${config.apiUrl}');
     return true;
   }());
   final problem = config.validate();
