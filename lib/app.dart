@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:fluent_ui/fluent_ui.dart' as fluent;
 import 'app/bootstrap/root.dart';
 import 'app/theme/app_theme.dart';
+import 'app/theme/fluent_design.dart';
 
 class SysCrediApp extends StatelessWidget {
   const SysCrediApp({super.key});
@@ -13,11 +15,17 @@ class SysCrediApp extends StatelessWidget {
       theme: appTheme(Brightness.light, brandPalette.value),
       darkTheme: appTheme(Brightness.dark, brandPalette.value),
       themeMode: mode,
-      builder: (context, child) => Stack(
-        children: [
-          child ?? const SizedBox.shrink(),
-          const BrandWatermarkOverlay(),
-        ],
+      builder: (context, child) => fluent.FluentTheme(
+        data: fluentTheme(
+          Theme.of(context).brightness,
+          brandPalette.value.primary,
+        ),
+        child: Stack(
+          children: [
+            child ?? const SizedBox.shrink(),
+            const BrandWatermarkOverlay(),
+          ],
+        ),
       ),
       home: Root(onTheme: (value) => themeMode.value = value),
     ),

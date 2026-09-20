@@ -1,6 +1,7 @@
 import 'package:fluent_ui/fluent_ui.dart' as fluent;
 import 'package:flutter/material.dart';
 import 'app_theme.dart';
+import 'design_tokens.dart';
 
 /// Fluent Design tokens shared by the whole workspace.
 ///
@@ -70,7 +71,7 @@ class FluentSurface extends StatelessWidget {
       padding: padding,
       decoration: BoxDecoration(
         color: cardColor,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(FluentTokens.radius12),
         border: Border.all(color: materialTheme.colorScheme.outlineVariant),
         boxShadow: [
           BoxShadow(
@@ -83,6 +84,76 @@ class FluentSurface extends StatelessWidget {
       child: child,
     );
   }
+}
+
+/// Shared action primitives. These wrappers keep new screens on the same
+/// density, typography and motion as the existing workspace.
+class FluentActionButton extends StatelessWidget {
+  const FluentActionButton({
+    required this.label,
+    required this.onPressed,
+    this.icon,
+    this.kind = FluentActionKind.primary,
+    super.key,
+  });
+
+  final String label;
+  final VoidCallback? onPressed;
+  final IconData? icon;
+  final FluentActionKind kind;
+
+  @override
+  Widget build(BuildContext context) {
+    final child = Text(label);
+    return switch (kind) {
+      FluentActionKind.primary =>
+        icon == null
+            ? FilledButton(onPressed: onPressed, child: child)
+            : FilledButton.icon(
+                onPressed: onPressed,
+                icon: Icon(icon),
+                label: child,
+              ),
+      FluentActionKind.secondary =>
+        icon == null
+            ? OutlinedButton(onPressed: onPressed, child: child)
+            : OutlinedButton.icon(
+                onPressed: onPressed,
+                icon: Icon(icon),
+                label: child,
+              ),
+      FluentActionKind.subtle =>
+        icon == null
+            ? TextButton(onPressed: onPressed, child: child)
+            : TextButton.icon(
+                onPressed: onPressed,
+                icon: Icon(icon),
+                label: child,
+              ),
+    };
+  }
+}
+
+enum FluentActionKind { primary, secondary, subtle }
+
+class FluentIconButton extends StatelessWidget {
+  const FluentIconButton({
+    required this.icon,
+    required this.onPressed,
+    required this.tooltip,
+    super.key,
+  });
+
+  final IconData icon;
+  final VoidCallback? onPressed;
+  final String tooltip;
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+    tooltip: tooltip,
+    onPressed: onPressed,
+    icon: Icon(icon, size: FluentTokens.iconMedium),
+  );
 }
 
 /// Fluent indeterminate progress feedback used for every asynchronous action.

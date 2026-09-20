@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:ui';
 
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Icons;
+import '../../../app/theme/fluent_icons_compat.dart';
 
 import '../domain/repository.dart';
+import '../../../app/theme/design_tokens.dart';
 
 typedef SearchDestination = ({String path, String title, IconData icon});
 typedef SearchSelection = ({String path, String query});
@@ -105,7 +107,7 @@ class _WorkspaceSearchDialogState extends State<WorkspaceSearchDialog> {
         constraints: const BoxConstraints(maxWidth: 680, maxHeight: 560),
         child: DecoratedBox(
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(12),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withValues(alpha: .22),
@@ -115,13 +117,13 @@ class _WorkspaceSearchDialogState extends State<WorkspaceSearchDialog> {
             ],
           ),
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(12),
             child: BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
               child: Container(
                 decoration: BoxDecoration(
                   color: colors.surface.withValues(alpha: .96),
-                  borderRadius: BorderRadius.circular(20),
+                  borderRadius: BorderRadius.circular(12),
                   border: Border.all(
                     color: colors.outlineVariant.withValues(alpha: .6),
                   ),
@@ -135,7 +137,7 @@ class _WorkspaceSearchDialogState extends State<WorkspaceSearchDialog> {
                         child: Row(
                           children: [
                             Icon(
-                              Icons.search_rounded,
+                              FluentSystemIcons.search,
                               color: colors.primary,
                               size: 22,
                             ),
@@ -150,7 +152,10 @@ class _WorkspaceSearchDialogState extends State<WorkspaceSearchDialog> {
                             IconButton(
                               tooltip: 'Fechar pesquisa',
                               onPressed: () => Navigator.pop(context),
-                              icon: const Icon(Icons.close_rounded, size: 20),
+                              icon: const Icon(
+                                FluentSystemIcons.close,
+                                size: 20,
+                              ),
                             ),
                           ],
                         ),
@@ -172,7 +177,7 @@ class _WorkspaceSearchDialogState extends State<WorkspaceSearchDialog> {
                             hintText: scope == 'areas'
                                 ? 'Que área procura?'
                                 : 'Pesquise por nome ou referência…',
-                            prefixIcon: const Icon(Icons.search_rounded),
+                            prefixIcon: const Icon(FluentSystemIcons.search),
                             suffixIcon: query.isEmpty
                                 ? null
                                 : IconButton(
@@ -181,7 +186,10 @@ class _WorkspaceSearchDialogState extends State<WorkspaceSearchDialog> {
                                       controller.clear();
                                       refresh();
                                     },
-                                    icon: const Icon(Icons.close, size: 18),
+                                    icon: const Icon(
+                                      FluentSystemIcons.close,
+                                      size: 18,
+                                    ),
                                   ),
                             filled: true,
                             fillColor: colors.surface,
@@ -211,7 +219,7 @@ class _WorkspaceSearchDialogState extends State<WorkspaceSearchDialog> {
                                 (
                                   path: 'areas',
                                   title: 'Áreas',
-                                  icon: Icons.grid_view_rounded,
+                                  icon: FluentSystemIcons.apps,
                                 ),
                                 ...scopes,
                               ])
@@ -383,7 +391,11 @@ class _WorkspaceSearchDialogState extends State<WorkspaceSearchDialog> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 40, color: Theme.of(context).colorScheme.primary),
+          Icon(
+            icon,
+            size: FluentTokens.iconLarge + FluentTokens.space16,
+            color: Theme.of(context).colorScheme.primary,
+          ),
           const SizedBox(height: 16),
           Text(text, textAlign: TextAlign.center),
           if (retry)

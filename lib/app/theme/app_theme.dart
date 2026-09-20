@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'local_brand_image.dart';
+import 'design_tokens.dart';
 
 /// Single source of truth for the institution's visual identity.
 const green = Color(0xFF21A56B);
@@ -370,7 +371,7 @@ ThemeData appTheme(
       color: scheme.surface,
       shape: RoundedRectangleBorder(
         side: BorderSide(color: scheme.outlineVariant),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(FluentTokens.radius12),
       ),
     ),
     appBarTheme: AppBarTheme(
@@ -378,9 +379,9 @@ ThemeData appTheme(
       scrolledUnderElevation: 0,
       backgroundColor: scheme.surface,
       surfaceTintColor: Colors.transparent,
-      titleSpacing: 28,
+      titleSpacing: FluentTokens.space24,
       centerTitle: false,
-      toolbarHeight: 72,
+      toolbarHeight: 64,
       shape: Border(
         bottom: BorderSide(color: scheme.outlineVariant.withValues(alpha: .8)),
       ),
@@ -390,30 +391,33 @@ ThemeData appTheme(
       fillColor: scheme.surface,
       // A little extra vertical breathing room keeps every form readable,
       // including forms assembled dynamically by the workspace.
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 17),
+      contentPadding: const EdgeInsets.symmetric(
+        horizontal: FluentTokens.space16,
+        vertical: FluentTokens.space12,
+      ),
       labelStyle: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13),
       floatingLabelStyle: TextStyle(
         color: palette.primary,
         fontWeight: FontWeight.w700,
       ),
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(FluentTokens.radius8),
         borderSide: BorderSide(color: scheme.outlineVariant),
       ),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(FluentTokens.radius8),
         borderSide: BorderSide(color: scheme.outlineVariant),
       ),
       focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(FluentTokens.radius8),
         borderSide: BorderSide(color: palette.primary, width: 1.5),
       ),
       focusedErrorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(FluentTokens.radius8),
         borderSide: BorderSide(color: scheme.error, width: 1.5),
       ),
       errorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(FluentTokens.radius8),
         borderSide: BorderSide(color: scheme.error),
       ),
       errorStyle: const TextStyle(fontSize: 11, height: 1.2),
@@ -430,7 +434,9 @@ ThemeData appTheme(
       constraints: const BoxConstraints(minWidth: 200, maxWidth: 560),
       actionsPadding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
       clipBehavior: Clip.antiAlias,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(FluentTokens.radius12),
+      ),
       titleTextStyle: TextStyle(
         color: scheme.onSurface,
         fontSize: 20,
@@ -441,7 +447,9 @@ ThemeData appTheme(
     iconButtonTheme: IconButtonThemeData(
       style: IconButton.styleFrom(
         fixedSize: const Size(48, 48),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(FluentTokens.radius8),
+        ),
         visualDensity: VisualDensity.standard,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
@@ -451,7 +459,9 @@ ThemeData appTheme(
         textStyle: const TextStyle(fontWeight: FontWeight.w700),
         minimumSize: const Size(0, 40),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(FluentTokens.radius8),
+        ),
         visualDensity: VisualDensity.standard,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
@@ -463,7 +473,9 @@ ThemeData appTheme(
         side: BorderSide(color: palette.primary),
         minimumSize: const Size(0, 40),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(FluentTokens.radius8),
+        ),
         visualDensity: VisualDensity.standard,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
@@ -474,7 +486,7 @@ ThemeData appTheme(
       elevation: 16,
       shadowColor: scheme.shadow,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(FluentTokens.radius12),
         side: BorderSide(color: scheme.outlineVariant),
       ),
       labelTextStyle: WidgetStatePropertyAll(
@@ -495,7 +507,7 @@ ThemeData appTheme(
           vertical: 17,
         ),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(FluentTokens.radius8),
           borderSide: BorderSide(color: scheme.outlineVariant),
         ),
       ),
@@ -506,7 +518,9 @@ ThemeData appTheme(
         foregroundColor: palette.primary,
         minimumSize: const Size(0, 40),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(FluentTokens.radius8),
+        ),
         visualDensity: VisualDensity.standard,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
@@ -518,7 +532,9 @@ ThemeData appTheme(
         foregroundColor: scheme.onPrimary,
         minimumSize: const Size(0, 40),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(FluentTokens.radius8),
+        ),
         visualDensity: VisualDensity.standard,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),

@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Icons;
+import '../theme/design_tokens.dart';
 import '../theme/app_theme.dart';
 import '../config/config.dart';
 import 'composition.dart';
@@ -94,7 +95,7 @@ class _ConnectionError extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.cloud_off_outlined, size: 52),
+              const Icon(FluentSystemIcons.error, size: 52),
               const SizedBox(height: 18),
               const Text(
                 'Não foi possível ligar ao SysCredi',
@@ -110,7 +111,7 @@ class _ConnectionError extends StatelessWidget {
               const SizedBox(height: 24),
               FilledButton.icon(
                 onPressed: onRetry,
-                icon: const Icon(Icons.refresh),
+                icon: const Icon(FluentSystemIcons.refresh),
                 label: const Text('Tentar novamente'),
               ),
             ],

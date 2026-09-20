@@ -1,5 +1,6 @@
 import 'dart:async';
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Icons;
+import '../../app/theme/fluent_icons_compat.dart';
 import 'dart:math' as math;
 import '../../app/theme/app_theme.dart';
 
@@ -110,7 +111,7 @@ class _ProgressDialog extends StatelessWidget {
   const _ProgressDialog();
   @override
   Widget build(BuildContext context) => AlertDialog(
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
     content: const SizedBox(
       width: 320,
       child: Row(
@@ -211,7 +212,7 @@ class _ResultDialogState extends State<_ResultDialog>
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
-            borderRadius: BorderRadius.circular(30),
+            borderRadius: BorderRadius.circular(12),
             border: Border.all(
               color: palette.primary.withValues(alpha: dark ? .48 : .30),
               width: 1.2,
@@ -279,7 +280,7 @@ class _ResultDialogState extends State<_ResultDialog>
                             context,
                           ).colorScheme.onPrimary,
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(13),
+                            borderRadius: BorderRadius.circular(8),
                           ),
                           textStyle: const TextStyle(
                             fontSize: 15,

@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Icons;
+import '../../../app/theme/fluent_icons_compat.dart';
 import 'package:syscredi/core/widgets/equal_button_group.dart';
 
 import '../../../app/theme/app_theme.dart';
@@ -412,7 +413,7 @@ class _LoginPageState extends State<LoginPage> {
                   ),
                   decoration: BoxDecoration(
                     color: Colors.white.withValues(alpha: .08),
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(12),
                     border: Border.all(
                       color: Colors.white.withValues(alpha: .12),
                     ),
@@ -677,7 +678,7 @@ class _LoginPill extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: .08),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,

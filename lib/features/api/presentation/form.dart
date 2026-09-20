@@ -1,5 +1,6 @@
 import 'package:syscredi/core/widgets/equal_button_group.dart';
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Icons;
+import '../../../app/theme/fluent_icons_compat.dart';
 import '../domain/repository.dart';
 import '../domain/money.dart';
 
@@ -30,11 +31,7 @@ Future<Json?> form(
 );
 
 class _Form extends StatefulWidget {
-  const _Form({
-    required this.api,
-    required this.title,
-    required this.fields,
-  });
+  const _Form({required this.api, required this.title, required this.fields});
   final Repository api;
   final String title;
   final List<Field> fields;

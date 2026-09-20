@@ -1,17 +1,21 @@
-import 'package:syscredi/core/widgets/equal_button_group.dart';
 import 'dart:async';
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+
 import 'package:file_selector/file_selector.dart';
-import 'package:fluent_ui/fluent_ui.dart' as fluent;
+import 'package:flutter/material.dart' hide Icons;
+import 'package:flutter/services.dart';
+import 'package:syscredi/core/widgets/equal_button_group.dart';
+
 import '../../../app/theme/app_theme.dart';
+import '../../../app/theme/design_tokens.dart';
+import '../../../app/theme/fluent_icons_compat.dart';
 import '../../../core/csv/csv_codec.dart';
-import '../domain/repository.dart';
 import '../domain/money.dart';
-import 'session_view_model.dart';
+import '../domain/repository.dart';
 import 'form.dart';
 import 'navigation.dart';
 import 'search_dialog.dart';
+import 'session_view_model.dart';
+import 'simulator_panel.dart';
 
 const _stages = {
   'documentation': 'Documentação',
@@ -327,6 +331,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   Timer? timer;
   final search = TextEditingController();
   String clientCategory = 'Indivíduos';
+  String clientStatusFilter = 'Todos';
   @override
   void initState() {
     super.initState();
@@ -480,16 +485,26 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         Field('tradingName', 'Nome comercial'),
         Field('registrationNumber', 'NUEL / Registo'),
         Field('taxNumber', 'NUIT'),
+        Field('entityType', 'Tipo de entidade', optional: true),
+        Field('licenseNumber', 'Número da licença', optional: true),
         Field('phone', 'Telefone'),
+        Field('email', 'Email', optional: true),
         Field('address', 'Endereço'),
+        Field('city', 'Cidade', optional: true),
         Field('activity', 'Actividade'),
         Field('representative', 'Representante'),
+        Field('politicallyExposed', 'Politicamente exposta?', optional: true),
+        Field('notify', 'Notificar?', optional: true),
+        Field('receiveNotifications', 'Receber notificações?', optional: true),
+        Field('location', 'Localização GPS', optional: true),
       ],
       'co-signers' => const [
         Field('clientId', 'Cliente', resource: 'clients'),
         Field('name', 'Nome'),
         Field('document', 'Documento'),
         Field('phone', 'Telefone'),
+        Field('gender', 'Género', optional: true),
+        Field('birthDate', 'Data de nascimento', kind: 'date', optional: true),
         Field('relationship', 'Relação'),
       ],
       'products' => const [
@@ -542,6 +557,8 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         Field('name', 'Nome'),
         Field('document', 'Documento'),
         Field('phone', 'Telefone'),
+        Field('gender', 'Género', optional: true),
+        Field('birthDate', 'Data de nascimento', kind: 'date', optional: true),
         Field('relationship', 'Relação'),
       ],
       'risk-scores' => const [
@@ -603,7 +620,13 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     final data = await form(
       context,
       api,
-      route == 'users' ? 'Autorizar utilizador existente' : 'Novo registo',
+      route == 'users'
+          ? 'Autorizar utilizador existente'
+          : route == 'clients'
+          ? 'Novo indivíduo'
+          : route == 'businesses'
+          ? 'Nova empresa'
+          : 'Novo registo',
       fields,
     );
     if (data != null && mounted) {
@@ -704,17 +727,152 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     Field(
       'clientType',
       'Tipo de cliente',
-      options: const {'individual': 'Indivíduo', 'business': 'Empresa'},
-      initial: row?['client_type']?.toString() ?? 'individual',
+      // O cadastro de empresa possui fluxo e formulário próprios.
+      options: const {'individual': 'Indivíduo'},
+      initial: 'individual',
     ),
-    for (final (key, label) in [
-      ('name', 'Nome completo'),
-      ('phone', 'Telefone'),
-      ('document', 'Documento'),
-      ('activity', 'Actividade'),
-      ('location', 'Localização'),
-    ])
-      Field(key, label, initial: row?[key]?.toString() ?? ''),
+    Field('name', 'Nome completo', initial: row?['name']?.toString() ?? ''),
+    Field(
+      'email',
+      'Email',
+      optional: true,
+      initial: row?['email']?.toString() ?? '',
+    ),
+    Field('phone', 'Telefone', initial: row?['phone']?.toString() ?? ''),
+    Field(
+      'documentType',
+      'Tipo de documento',
+      optional: true,
+      initial: row?['document_type']?.toString() ?? '',
+    ),
+    Field(
+      'documentExpiry',
+      'Validade do documento',
+      kind: 'date',
+      optional: true,
+      initial: row?['document_expiry']?.toString() ?? '',
+    ),
+    Field(
+      'document',
+      'Número do documento',
+      initial: row?['document']?.toString() ?? '',
+    ),
+    Field(
+      'issuePlace',
+      'Local de emissão',
+      optional: true,
+      initial: row?['issue_place']?.toString() ?? '',
+    ),
+    Field(
+      'birthDate',
+      'Data de nascimento',
+      kind: 'date',
+      optional: true,
+      initial: row?['birth_date']?.toString() ?? '',
+    ),
+    Field(
+      'nationality',
+      'Nacionalidade',
+      optional: true,
+      initial: row?['nationality']?.toString() ?? '',
+    ),
+    Field(
+      'street',
+      'Rua',
+      optional: true,
+      initial: row?['street']?.toString() ?? '',
+    ),
+    Field(
+      'neighborhood',
+      'Bairro',
+      optional: true,
+      initial: row?['neighborhood']?.toString() ?? '',
+    ),
+    Field(
+      'houseNumber',
+      'Número da casa',
+      optional: true,
+      initial: row?['house_number']?.toString() ?? '',
+    ),
+    Field(
+      'quarter',
+      'Quarteirão',
+      optional: true,
+      initial: row?['quarter']?.toString() ?? '',
+    ),
+    Field(
+      'city',
+      'Cidade',
+      optional: true,
+      initial: row?['city']?.toString() ?? '',
+    ),
+    Field(
+      'maritalStatus',
+      'Estado civil',
+      optional: true,
+      initial: row?['marital_status']?.toString() ?? '',
+    ),
+    Field(
+      'politicallyExposed',
+      'Politicamente exposto?',
+      optional: true,
+      initial: row?['politically_exposed']?.toString() ?? '',
+    ),
+    Field(
+      'registrationDate',
+      'Data de cadastro',
+      kind: 'date',
+      optional: true,
+      initial: row?['registration_date']?.toString() ?? '',
+    ),
+    Field(
+      'gender',
+      'Género',
+      optional: true,
+      initial: row?['gender']?.toString() ?? '',
+    ),
+    Field(
+      'status',
+      'Situação',
+      optional: true,
+      initial: row?['status']?.toString() ?? '',
+    ),
+    Field(
+      'notify',
+      'Notificar?',
+      optional: true,
+      initial: row?['notify']?.toString() ?? '',
+    ),
+    Field(
+      'receiveNotifications',
+      'Receber notificações?',
+      optional: true,
+      initial: row?['receive_notifications']?.toString() ?? '',
+    ),
+    Field(
+      'photo',
+      'Foto do cliente',
+      optional: true,
+      initial: row?['photo']?.toString() ?? '',
+    ),
+    Field(
+      'location',
+      'Localização GPS',
+      optional: true,
+      initial: row?['location']?.toString() ?? '',
+    ),
+    Field(
+      'observations',
+      'Observações',
+      optional: true,
+      initial: row?['observations']?.toString() ?? '',
+    ),
+    Field(
+      'manager',
+      'Gestor',
+      optional: true,
+      initial: row?['manager']?.toString() ?? '',
+    ),
   ];
   List<Field> _paymentFields([String? loanId]) => [
     if (loanId == null) const Field('loanId', 'Contrato', resource: 'loans'),
@@ -739,7 +897,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         'Situação',
         kind: 'bool',
         options: const {'false': 'Activo', 'true': 'Arquivado'},
-        initial: row['archived'].toString(),
+        initial: row['archived'] == true ? 'true' : 'false',
       ),
     ]);
     if (body != null && mounted) {
@@ -768,13 +926,51 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         initial: '${row['registration_number'] ?? ''}',
       ),
       Field('taxNumber', 'NUIT', initial: '${row['tax_number'] ?? ''}'),
+      Field(
+        'entityType',
+        'Tipo de entidade',
+        optional: true,
+        initial: '${row['entity_type'] ?? ''}',
+      ),
+      Field(
+        'licenseNumber',
+        'Número da licença',
+        optional: true,
+        initial: '${row['license_number'] ?? ''}',
+      ),
       Field('phone', 'Telefone', initial: '${row['phone'] ?? ''}'),
+      Field('email', 'Email', optional: true, initial: '${row['email'] ?? ''}'),
       Field('address', 'Endereço', initial: '${row['address'] ?? ''}'),
+      Field('city', 'Cidade', optional: true, initial: '${row['city'] ?? ''}'),
       Field('activity', 'Actividade', initial: '${row['activity'] ?? ''}'),
       Field(
         'representative',
         'Representante',
         initial: '${row['representative'] ?? ''}',
+      ),
+      Field(
+        'politicallyExposed',
+        'Politicamente exposta?',
+        optional: true,
+        initial: '${row['politically_exposed'] ?? ''}',
+      ),
+      Field(
+        'notify',
+        'Notificar?',
+        optional: true,
+        initial: '${row['notify'] ?? ''}',
+      ),
+      Field(
+        'receiveNotifications',
+        'Receber notificações?',
+        optional: true,
+        initial: '${row['receive_notifications'] ?? ''}',
+      ),
+      Field(
+        'location',
+        'Localização GPS',
+        optional: true,
+        initial: '${row['location'] ?? ''}',
       ),
       Field(
         'active',
@@ -968,29 +1164,139 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     return [Text('$value')];
   }
 
-  Future<void> details(Json row, {String title = 'Detalhes'}) =>
-      showDialog<void>(
-        context: context,
-        builder: (_) => AlertDialog(
-          title: Text(title),
-          content: SizedBox(
-            width: 600,
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: describe(row),
+  Future<void> details(
+    Json row, {
+    String title = 'Detalhes',
+  }) => showDialog<void>(
+    context: context,
+    builder: (dialogContext) {
+      final scheme = Theme.of(dialogContext).colorScheme;
+      final scalarEntries = row.entries
+          .where((entry) => entry.value is! Map && entry.value is! List)
+          .where((entry) => entry.key != 'id')
+          .toList();
+      return Dialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        clipBehavior: Clip.antiAlias,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 920, maxHeight: 720),
+          child: Column(
+            children: [
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(24, 20, 16, 20),
+                color: scheme.surfaceContainerHighest,
+                child: Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 22,
+                      backgroundColor: scheme.primary.withValues(alpha: .12),
+                      child: Icon(
+                        row['legal_name'] != null
+                            ? Icons.business_outlined
+                            : Icons.person,
+                        color: scheme.primary,
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            style: Theme.of(dialogContext).textTheme.titleLarge
+                                ?.copyWith(fontWeight: FontWeight.w700),
+                          ),
+                          Text(
+                            '${row['name'] ?? row['legal_name'] ?? row['trading_name'] ?? 'Registo'}',
+                            style: Theme.of(dialogContext).textTheme.bodyMedium
+                                ?.copyWith(color: scheme.onSurfaceVariant),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Fechar',
+                      onPressed: () => Navigator.pop(dialogContext),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
+                ),
               ),
-            ),
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(24),
+                  child: Table(
+                    columnWidths: const {
+                      0: FlexColumnWidth(1.1),
+                      1: FlexColumnWidth(2),
+                    },
+                    border: TableBorder(
+                      horizontalInside: BorderSide(color: Colors.transparent),
+                    ),
+                    children: [
+                      for (var index = 0; index < scalarEntries.length; index++)
+                        TableRow(
+                          decoration: BoxDecoration(
+                            color: index.isEven
+                                ? scheme.surfaceContainerLow
+                                : scheme.surface,
+                          ),
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 13,
+                              ),
+                              child: Text(
+                                _labels[scalarEntries[index].key] ??
+                                    scalarEntries[index].key,
+                                style: TextStyle(
+                                  color: scheme.onSurfaceVariant,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 13,
+                              ),
+                              child: SelectableText(
+                                display(
+                                  scalarEntries[index].key,
+                                  scalarEntries[index].value,
+                                ),
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: FilledButton(
+                    onPressed: () => Navigator.pop(dialogContext),
+                    child: const Text('Fechar'),
+                  ),
+                ),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Fechar'),
-            ),
-          ],
         ),
       );
+    },
+  );
   Future<void> retry(PendingWrite operation) async {
     setState(() => busy = true);
     try {
@@ -1705,7 +2011,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                           color: accent.withValues(alpha: .12),
                           borderRadius: BorderRadius.circular(8),
                         ),
-                        child: Icon(icon, color: accent, size: 27),
+                        child: Icon(icon, color: accent, size: 18),
                       ),
                       const Spacer(),
                       Container(
@@ -1888,8 +2194,16 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   Widget _body() {
     if (route == 'settings' || route == 'organization-settings')
       return _settingsBody();
-    if (route == 'clients') return _clientsBody();
+    if ({
+      'clients',
+      'businesses',
+      'co-signers',
+      'client-guarantors',
+    }.contains(route)) {
+      return _clientsBody();
+    }
     if (route == 'dashboard') return _dashboardBody();
+    if (route == 'simulator') return const SimulatorPanel();
     if (route == 'simulator' || route == 'reports') {
       final cards = Wrap(
         spacing: 16,
@@ -1924,7 +2238,6 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
             ),
         ],
       );
-      if (route == 'simulator') return cards;
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -2293,8 +2606,108 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     }
   }
 
+  static final _mockIndividualClients = <Json>[
+    {
+      'id': 'mock-client-001',
+      'name': 'Edson Mário Morais',
+      'phone': '878 935 415',
+      'document': '110105200085-C',
+      'activity': 'Comércio a retalho',
+      'location': 'Maputo · KaMpfumo',
+      'gender': 'Masculino',
+      'status': 'Regular',
+      'kyc_expires_at': '2026-10-20',
+      'registration_date': '2026-09-09',
+      'city': 'Maputo',
+      'nationality': 'Moçambicana',
+      'birth_date': '1999-07-28',
+      'marital_status': 'Solteiro(a)',
+      'manager': 'Naveia Muaquiquia João',
+    },
+    {
+      'id': 'mock-client-002',
+      'name': 'Edilson Pereira Langa',
+      'phone': '855 336 109',
+      'document': '110108869332-P',
+      'activity': 'Agricultura',
+      'location': 'Maputo · Marracuene',
+      'status': 'Regular',
+      'kyc_expires_at': '2026-10-20',
+      'registration_date': '2026-09-09',
+    },
+    {
+      'id': 'mock-client-003',
+      'name': 'Mucuaro Fernando',
+      'phone': '870 000 335',
+      'document': '031707123481-F',
+      'activity': 'Serviços',
+      'location': 'Maputo · Matola',
+      'status': 'Regular',
+      'kyc_expires_at': '2026-11-02',
+      'registration_date': '2026-09-09',
+    },
+    {
+      'id': 'mock-client-004',
+      'name': 'Neves João Madeira',
+      'phone': '876 608 410',
+      'document': '110104093182-B',
+      'activity': 'Comércio',
+      'location': 'Maputo · KaMubukwana',
+      'status': 'Regular',
+      'kyc_expires_at': '2026-12-02',
+      'registration_date': '2026-09-07',
+    },
+    {
+      'id': 'mock-client-005',
+      'name': 'Wezimane João Alficha',
+      'phone': '878 935 415',
+      'document': '060102696230-B',
+      'activity': 'Produção',
+      'location': 'Matola',
+      'status': 'Regular',
+      'registration_date': '2026-09-07',
+    },
+  ];
+
+  static final _mockBusinesses = <Json>[
+    {
+      'id': 'mock-business-001',
+      'legal_name': 'Ac esa Microcrédito, E.I',
+      'trading_name': 'Acesa Microcrédito',
+      'tax_number': '400123456',
+      'phone': '823 456 789',
+      'active': true,
+      'city': 'Maputo',
+      'entity_type': 'Sociedade limitada',
+      'license_number': 'LIC-2026-0081',
+      'activity': 'Serviços financeiros',
+      'registration_date': '2026-09-09',
+    },
+  ];
+
+  static final _mockGuarantors = <Json>[
+    {
+      'id': 'mock-guarantor-001',
+      'name': 'Muaquiquia João',
+      'phone': '869 198 551',
+      'document': '040501882771J',
+      'gender': 'Masculino',
+      'relationship': 'Familiar',
+      'birth_date': '1988-04-12',
+      'registration_date': '2026-05-27',
+    },
+  ];
+
   Widget _clientsBody() {
-    final visible = rows;
+    if (route != 'clients') return _relatedClientsBody();
+    final source = rows.isEmpty ? _mockIndividualClients : rows;
+    final visible = clientStatusFilter == 'Todos'
+        ? source
+        : source
+              .where(
+                (row) => '${row['status'] ?? 'Regular'}' == clientStatusFilter,
+              )
+              .toList();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -2329,7 +2742,29 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                 ],
                 onChanged: (value) {
                   if (value == null) return;
-                  setState(() => clientCategory = value);
+                  _selectClientCategory(value);
+                },
+              ),
+            ),
+            SizedBox(
+              width: 190,
+              child: DropdownButtonFormField<String>(
+                isExpanded: true,
+                initialValue: clientStatusFilter,
+                decoration: InputDecoration(
+                  labelText: 'Filtrar por status',
+                  prefixIcon: const Icon(Icons.filter_alt_outlined),
+                ),
+                items: const [
+                  DropdownMenuItem(value: 'Todos', child: Text('Todos')),
+                  DropdownMenuItem(value: 'Regular', child: Text('Regular')),
+                  DropdownMenuItem(value: 'Bom', child: Text('Bom')),
+                  DropdownMenuItem(value: 'Risco', child: Text('Risco')),
+                  DropdownMenuItem(value: 'Péssimo', child: Text('Péssimo')),
+                  DropdownMenuItem(value: 'Normal', child: Text('Normal')),
+                ],
+                onChanged: (value) {
+                  if (value != null) setState(() => clientStatusFilter = value);
                 },
               ),
             ),
@@ -2366,11 +2801,11 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                     horizontalMargin: 20,
                     columnSpacing: 28,
                     columns: const [
-                      DataColumn(label: Text('CLIENTE')),
-                      DataColumn(label: Text('DOCUMENTO')),
-                      DataColumn(label: Text('ACTIVIDADE')),
-                      DataColumn(label: Text('LOCALIZAÇÃO')),
-                      DataColumn(label: Text('KYC')),
+                      DataColumn(label: Text('NOME')),
+                      DataColumn(label: Text('TELEFONE')),
+                      DataColumn(label: Text('NUMERO DOC')),
+                      DataColumn(label: Text('SITUAÇÃO')),
+                      DataColumn(label: Text('DATA CADASTRO')),
                       DataColumn(label: Text('ACÇÕES')),
                     ],
                     rows: [
@@ -2410,43 +2845,46 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                                           fontWeight: FontWeight.w700,
                                         ),
                                       ),
-                                      Text(
-                                        '${row['phone'] ?? '—'}',
-                                        style: Theme.of(
-                                          context,
-                                        ).textTheme.bodySmall,
-                                      ),
                                     ],
                                   ),
                                 ],
                               ),
                             ),
+                            DataCell(Text('${row['phone'] ?? '—'}')),
                             DataCell(Text('${row['document'] ?? '—'}')),
-                            DataCell(Text('${row['activity'] ?? '—'}')),
-                            DataCell(Text('${row['location'] ?? '—'}')),
-                            DataCell(_kycBadge(row)),
+                            DataCell(_clientStatusBadge(row)),
                             DataCell(
-                              PopupMenuButton<String>(
-                                tooltip: 'Acções do cliente',
-                                onSelected: (value) {
-                                  if (value == 'view') {
-                                    details(row, title: 'Resumo do cliente');
-                                  }
-                                  if (value == 'edit') editClient(row);
-                                  if (value == 'kyc') kyc(row);
-                                },
-                                itemBuilder: (_) => const [
-                                  PopupMenuItem(
-                                    value: 'view',
-                                    child: Text('Ver resumo'),
+                              Text(
+                                '${row['registration_date'] ?? row['created_at'] ?? '—'}',
+                              ),
+                            ),
+                            DataCell(
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  _tableActionButton(
+                                    tooltip: 'Ver resumo',
+                                    icon: Icons.visibility_outlined,
+                                    onPressed: () => details(
+                                      row,
+                                      title: 'Resumo do cliente',
+                                    ),
                                   ),
-                                  PopupMenuItem(
-                                    value: 'edit',
-                                    child: Text('Editar'),
+                                  _tableActionButton(
+                                    tooltip: 'Editar cliente',
+                                    icon: Icons.edit,
+                                    onPressed: () => editClient(row),
                                   ),
-                                  PopupMenuItem(
-                                    value: 'kyc',
-                                    child: Text('Rever identificação'),
+                                  _tableActionButton(
+                                    tooltip: 'Rever identificação',
+                                    icon: Icons.verified_outlined,
+                                    onPressed: () => kyc(row),
+                                  ),
+                                  _tableActionButton(
+                                    tooltip: 'Remover cliente',
+                                    icon: Icons.delete_sweep_outlined,
+                                    destructive: true,
+                                    onPressed: () => _removeClientRecord(row),
                                   ),
                                 ],
                               ),
@@ -2458,6 +2896,247 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                 ),
         ),
       ],
+    );
+  }
+
+  Widget _relatedClientsBody() {
+    final company = route == 'businesses';
+    final guarantor = route == 'client-guarantors';
+    final coSigner = route == 'co-signers';
+    final title = company
+        ? 'Empresas'
+        : guarantor
+        ? 'Avalistas'
+        : coSigner
+        ? 'Co-assinantes'
+        : 'Clientes';
+    final visible = rows.isEmpty
+        ? (company ? _mockBusinesses : _mockGuarantors)
+        : rows;
+    final columns = company
+        ? const [
+            ('legal_name', 'DENOMINAÇÃO LEGAL'),
+            ('entity_type', 'TIPO'),
+            ('tax_number', 'NUIT'),
+            ('activity', 'ACTIVIDADE'),
+            ('phone', 'TELEFONE'),
+            ('city', 'CIDADE'),
+            ('active', 'ESTADO'),
+          ]
+        : guarantor
+        ? const [
+            ('name', 'NOME'),
+            ('phone', 'TELEFONE'),
+            ('document', 'DOCUMENTO'),
+            ('gender', 'GÉNERO'),
+            ('registration_date', 'DATA CADASTRO'),
+          ]
+        : const [
+            ('name', 'NOME'),
+            ('document', 'DOCUMENTO'),
+            ('phone', 'TELEFONE'),
+            ('relationship', 'RELAÇÃO'),
+          ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Wrap(
+          spacing: 12,
+          runSpacing: 10,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            SizedBox(
+              width: 230,
+              child: DropdownButtonFormField<String>(
+                isExpanded: true,
+                initialValue: company
+                    ? 'Empresas'
+                    : guarantor
+                    ? 'Avalistas'
+                    : coSigner
+                    ? 'Co-assinantes'
+                    : 'Indivíduos',
+                decoration: const InputDecoration(
+                  labelText: 'Tipo de cliente',
+                  prefixIcon: Icon(Icons.filter_alt_outlined),
+                ),
+                items: const [
+                  DropdownMenuItem(
+                    value: 'Indivíduos',
+                    child: Text('Indivíduos'),
+                  ),
+                  DropdownMenuItem(value: 'Empresas', child: Text('Empresas')),
+                  DropdownMenuItem(
+                    value: 'Avalistas',
+                    child: Text('Avalistas'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'Co-assinantes',
+                    child: Text('Co-assinantes'),
+                  ),
+                ],
+                onChanged: (value) {
+                  if (value != null) _selectClientCategory(value);
+                },
+              ),
+            ),
+            SizedBox(
+              height: 48,
+              child: FilledButton.icon(
+                onPressed: busy || loading ? null : create,
+                icon: Icon(
+                  company ? Icons.business_outlined : Icons.person_add,
+                ),
+                label: Text(
+                  company
+                      ? 'Adicionar empresa'
+                      : coSigner
+                      ? 'Adicionar co-assinante'
+                      : 'Adicionar avalista',
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Card(
+          child: visible.isEmpty
+              ? Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text('Nenhum registo de $title encontrado.'),
+                )
+              : SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: DataTable(
+                    dataRowMinHeight: 56,
+                    dataRowMaxHeight: 68,
+                    headingRowHeight: 52,
+                    horizontalMargin: 20,
+                    columnSpacing: 28,
+                    columns: [
+                      for (final column in columns)
+                        DataColumn(label: Text(column.$2)),
+                      const DataColumn(label: Text('ACÇÕES')),
+                    ],
+                    rows: [
+                      for (final row in visible)
+                        DataRow(
+                          cells: [
+                            for (final column in columns)
+                              DataCell(
+                                Text(
+                                  column.$1 == 'active'
+                                      ? (row[column.$1] == false
+                                            ? 'Inactiva'
+                                            : 'Activa')
+                                      : '${row[column.$1] ?? '—'}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            DataCell(
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  _tableActionButton(
+                                    tooltip: 'Ver resumo',
+                                    icon: Icons.visibility_outlined,
+                                    onPressed: () =>
+                                        details(row, title: 'Resumo de $title'),
+                                  ),
+                                  _tableActionButton(
+                                    tooltip: company
+                                        ? 'Editar empresa'
+                                        : 'Editar registo',
+                                    icon: Icons.edit,
+                                    onPressed: () {
+                                      if (company) {
+                                        editBusiness(row);
+                                      } else {
+                                        editCoSigner(row);
+                                      }
+                                    },
+                                  ),
+                                  _tableActionButton(
+                                    tooltip: company
+                                        ? 'Remover empresa'
+                                        : 'Remover registo',
+                                    icon: Icons.delete_sweep_outlined,
+                                    destructive: true,
+                                    onPressed: () => _removeClientRecord(
+                                      row,
+                                      resource: company
+                                          ? 'businesses'
+                                          : guarantor
+                                          ? 'client-guarantors'
+                                          : 'co-signers',
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                    ],
+                  ),
+                ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _removeClientRecord(
+    Json row, {
+    String resource = 'clients',
+  }) async {
+    final name = '${row['name'] ?? row['legal_name'] ?? 'este registo'}';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Remover registo?'),
+        content: Text('Esta acção irá remover “$name”. Deseja continuar?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(dialogContext).colorScheme.error,
+            ),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Remover'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && row['id'] != null && mounted) {
+      await mutate('DELETE', '/$resource/${row['id']}', {});
+    }
+  }
+
+  Widget _tableActionButton({
+    required String tooltip,
+    required IconData icon,
+    required VoidCallback onPressed,
+    bool destructive = false,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    final color = destructive ? scheme.error : scheme.primary;
+    return Padding(
+      padding: const EdgeInsets.only(right: 4),
+      child: IconButton(
+        tooltip: tooltip,
+        onPressed: onPressed,
+        icon: Icon(icon, size: 17),
+        constraints: const BoxConstraints.tightFor(width: 34, height: 34),
+        padding: EdgeInsets.zero,
+        style: IconButton.styleFrom(
+          backgroundColor: color.withValues(alpha: .10),
+          foregroundColor: color,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
+        ),
+      ),
     );
   }
 
@@ -2495,10 +3174,38 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     );
   }
 
+  Widget _clientStatusBadge(Json row) {
+    final status = '${row['status'] ?? 'Regular'}';
+    final normalized = status.toLowerCase();
+    final color = normalized.contains('péss') || normalized.contains('risco')
+        ? Colors.orange
+        : normalized.contains('bom') || normalized.contains('regular')
+        ? green
+        : Theme.of(context).colorScheme.primary;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: .10),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        status,
+        style: TextStyle(
+          color: color,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
   Area _currentArea() => switch (route) {
     'simulator' => Area.simulator,
     'products' => Area.products,
-    'clients' || 'businesses' || 'co-signers' => Area.clients,
+    'clients' ||
+    'businesses' ||
+    'co-signers' ||
+    'client-guarantors' => Area.clients,
     'requests' => Area.applications,
     'loans' || 'contracts' => Area.portfolio,
     'payments' || 'receipts' => Area.collections,
@@ -2529,15 +3236,31 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
 
   void _selectArea(Area area) => select(_routeForArea(area));
 
+  void _selectClientCategory(String value) {
+    clientCategory = value;
+    final target = switch (value) {
+      'Empresas' => 'businesses',
+      'Avalistas' => 'client-guarantors',
+      'Co-assinantes' => 'co-signers',
+      _ => 'clients',
+    };
+    select(target);
+  }
+
   void _selectSubmodule(String label) {
     if (label == 'Utilizadores') {
       select('users');
       return;
     }
-    if (label == 'Indivíduos') clientCategory = label;
-    if (label == 'Empresas') clientCategory = label;
-    if (label == 'Avalistas') clientCategory = label;
-    if (label == 'Co-assinantes') clientCategory = label;
+    if (label == 'Indivíduos' || label == 'Empresas' || label == 'Avalistas') {
+      _selectClientCategory(label);
+      return;
+    }
+    if (label == 'Co-assinantes') {
+      clientCategory = label;
+      select('co-signers');
+      return;
+    }
     if (label == 'Estornos') {
       select('payment-reversals');
       return;
@@ -2596,6 +3319,243 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     await load();
   }
 
+  Future<void> _showProfileDialog() async {
+    final profile = widget.session.profile ?? <String, dynamic>{};
+    final name = TextEditingController(text: '${profile['name'] ?? ''}');
+    final email = TextEditingController(text: '${profile['email'] ?? ''}');
+    final phone = TextEditingController(text: '${profile['phone'] ?? ''}');
+    final organization =
+        '${profile['organization_name'] ?? profile['organization'] ?? profile['organization_id'] ?? profile['organizationId'] ?? 'Organização actual'}';
+    final role = _roles[profile['role']] ?? '${profile['role'] ?? 'Operador'}';
+    try {
+      final changes = await showDialog<Json>(
+        context: context,
+        builder: (dialogContext) {
+          final scheme = Theme.of(dialogContext).colorScheme;
+          return Dialog(
+            insetPadding: const EdgeInsets.symmetric(
+              horizontal: 28,
+              vertical: 24,
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 680),
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(28),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 28,
+                          backgroundColor: scheme.primary,
+                          child: Icon(
+                            FluentSystemIcons.account,
+                            color: scheme.onPrimary,
+                            size: 28,
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Perfil de acesso',
+                                style: Theme.of(dialogContext)
+                                    .textTheme
+                                    .headlineSmall
+                                    ?.copyWith(fontWeight: FontWeight.w800),
+                              ),
+                              Text(
+                                'Gerencie os seus dados de acesso ao SysCredi',
+                                style: TextStyle(
+                                  color: scheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: 'Fechar',
+                          onPressed: () => Navigator.pop(dialogContext),
+                          icon: const Icon(FluentSystemIcons.close),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 24),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [
+                        _profileInfoChip(
+                          dialogContext,
+                          FluentSystemIcons.shield,
+                          'Perfil',
+                          role,
+                        ),
+                        _profileInfoChip(
+                          dialogContext,
+                          FluentSystemIcons.business,
+                          'Organização',
+                          organization,
+                        ),
+                        _profileInfoChip(
+                          dialogContext,
+                          FluentSystemIcons.check,
+                          'Estado',
+                          profile['active'] == false ? 'Inactivo' : 'Activo',
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 24),
+                    Text(
+                      'Informações pessoais',
+                      style: Theme.of(dialogContext).textTheme.titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: name,
+                      decoration: const InputDecoration(
+                        labelText: 'Nome completo',
+                        prefixIcon: Icon(FluentSystemIcons.person),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: email,
+                      keyboardType: TextInputType.emailAddress,
+                      decoration: const InputDecoration(
+                        labelText: 'Email profissional',
+                        prefixIcon: Icon(FluentSystemIcons.mail),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: phone,
+                      keyboardType: TextInputType.phone,
+                      decoration: const InputDecoration(
+                        labelText: 'Telefone',
+                        prefixIcon: Icon(FluentSystemIcons.phone),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    Row(
+                      children: [
+                        Icon(
+                          FluentSystemIcons.lock,
+                          size: 17,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'O perfil e a organização são geridos pelo administrador.',
+                            style: TextStyle(
+                              color: scheme.onSurfaceVariant,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 24),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(dialogContext),
+                          child: const Text('Cancelar'),
+                        ),
+                        const SizedBox(width: 10),
+                        FilledButton.icon(
+                          onPressed: () => Navigator.pop(dialogContext, {
+                            'name': name.text.trim(),
+                            'email': email.text.trim(),
+                            'phone': phone.text.trim(),
+                          }),
+                          icon: const Icon(FluentSystemIcons.check),
+                          label: const Text('Guardar alterações'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      );
+      if (changes == null || !mounted) return;
+      if (profile['guest'] == true) {
+        profile.addAll(changes);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Perfil actualizado nesta sessão.')),
+        );
+        return;
+      }
+      await api.write('PATCH', '/me', changes);
+      await widget.session.verify();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Perfil actualizado com sucesso.')),
+        );
+      }
+    } on ApiFailure catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Não foi possível actualizar o perfil.'),
+          ),
+        );
+      }
+    } finally {
+      name.dispose();
+      email.dispose();
+      phone.dispose();
+    }
+  }
+
+  Widget _profileInfoChip(
+    BuildContext context,
+    IconData icon,
+    String label,
+    String value,
+  ) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerLow,
+        border: Border.all(color: scheme.outlineVariant),
+        borderRadius: BorderRadius.circular(9),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: scheme.primary),
+          const SizedBox(width: 7),
+          Text(
+            '$label: ',
+            style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
+          ),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.w700)),
+        ],
+      ),
+    );
+  }
+
   Widget _navbarAction({
     required String tooltip,
     required IconData icon,
@@ -2639,6 +3599,155 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     ),
   );
 
+  static const _mockNotifications = [
+    (
+      icon: FluentSystemIcons.warning,
+      title: 'Pagamento em atraso',
+      message: 'Existem prestações que precisam de acompanhamento.',
+      time: 'Há 12 min',
+    ),
+    (
+      icon: FluentSystemIcons.document,
+      title: 'Documentação pendente',
+      message: 'Um cliente aguarda revisão de identificação.',
+      time: 'Há 1 h',
+    ),
+    (
+      icon: FluentSystemIcons.check,
+      title: 'Operação confirmada',
+      message: 'O último desembolso foi processado com sucesso.',
+      time: 'Ontem',
+    ),
+  ];
+
+  Widget _notificationMenu() {
+    final scheme = Theme.of(context).colorScheme;
+    final badge = metrics['overdue_cents'] == null ? 0 : 6;
+    return PopupMenuButton<String>(
+      tooltip: 'Centro de notificações',
+      offset: const Offset(0, 12),
+      constraints: const BoxConstraints(minWidth: 360, maxWidth: 390),
+      color: scheme.surfaceContainerHigh,
+      elevation: 8,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      icon: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          const Icon(FluentSystemIcons.notifications),
+          if (badge > 0)
+            Positioned(
+              right: -7,
+              top: -7,
+              child: Container(
+                constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: scheme.primary,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: scheme.surface, width: 1.5),
+                ),
+                child: Text(
+                  '$badge',
+                  style: TextStyle(
+                    color: scheme.onPrimary,
+                    fontSize: 9,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+      onSelected: (value) {
+        if (value == 'pending') select('pending');
+        if (value == 'read') {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Notificações marcadas como lidas.')),
+          );
+        }
+      },
+      itemBuilder: (_) => [
+        PopupMenuItem<String>(
+          enabled: false,
+          height: 58,
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Centro de notificações',
+                  style: TextStyle(
+                    color: scheme.onSurface,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+              Text(
+                '$badge novas',
+                style: TextStyle(color: scheme.primary, fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+        const PopupMenuDivider(),
+        for (final notification in _mockNotifications)
+          PopupMenuItem<String>(
+            enabled: false,
+            height: 72,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(notification.icon, color: scheme.primary, size: 20),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        notification.title,
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      Text(
+                        notification.message,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: scheme.onSurfaceVariant,
+                          fontSize: 12,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        notification.time,
+                        style: TextStyle(color: scheme.primary, fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        const PopupMenuDivider(),
+        const PopupMenuItem<String>(
+          value: 'pending',
+          child: ListTile(
+            dense: true,
+            leading: Icon(FluentSystemIcons.pending),
+            title: Text('Ver todas as pendências'),
+          ),
+        ),
+        const PopupMenuItem<String>(
+          value: 'read',
+          child: ListTile(
+            dense: true,
+            leading: Icon(FluentSystemIcons.check),
+            title: Text('Marcar como lidas'),
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final wide = MediaQuery.sizeOf(context).width >= 1000;
@@ -2678,7 +3787,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                               onPressed: busy
                                   ? null
                                   : () => select('dashboard'),
-                              icon: const Icon(Icons.arrow_back_rounded),
+                              icon: const Icon(FluentSystemIcons.arrowBack),
                             ),
                           Flexible(
                             child: Text(
@@ -2699,136 +3808,345 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                       actions: [
                         _navbarAction(
                           tooltip: 'Pesquisar',
-                          icon: Icons.search_rounded,
+                          icon: FluentSystemIcons.search,
                           onPressed: _openSearch,
                         ),
                         _navbarAction(
                           tooltip: 'Pendências',
-                          icon: Icons.hourglass_empty_rounded,
+                          icon: FluentSystemIcons.pending,
                           badge: pending.length,
                           onPressed: () => select('pending'),
                         ),
-                        _navbarAction(
-                          tooltip: 'Alertas',
-                          icon: Icons.notifications_outlined,
-                          badge: metrics['overdue_cents'] == null ? 0 : 6,
-                          onPressed: () =>
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text(
-                                    'Não existem novas notificações.',
-                                  ),
-                                ),
-                              ),
-                        ),
+                        _notificationMenu(),
                         _navbarAction(
                           tooltip: 'Cobranças e tesouraria',
-                          icon: Icons.attach_money_rounded,
+                          icon: FluentSystemIcons.payments,
                           badge: metrics['overdue_cents'] == null ? 0 : 0,
                           onPressed: () => select('payments'),
                         ),
-                        IconButton(
+                        PopupMenuButton<ThemeMode>(
                           tooltip: 'Tema',
-                          onPressed: () async {
-                            final selected = await showDialog<ThemeMode>(
-                              context: context,
-                              builder: (dialogContext) => SimpleDialog(
-                                title: const Text('Tema da aplicação'),
-                                children: [
-                                  for (final option in [
-                                    (
-                                      ThemeMode.system,
-                                      'Automático',
-                                      Icons.brightness_auto_outlined,
-                                    ),
-                                    (
-                                      ThemeMode.light,
-                                      'Claro',
-                                      Icons.light_mode_outlined,
-                                    ),
-                                    (
-                                      ThemeMode.dark,
-                                      'Escuro',
-                                      Icons.dark_mode_outlined,
-                                    ),
-                                  ])
-                                    SimpleDialogOption(
-                                      onPressed: () => Navigator.pop(
-                                        dialogContext,
-                                        option.$1,
-                                      ),
-                                      child: ListTile(
-                                        leading: Icon(option.$3),
-                                        title: Text(option.$2),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            );
-                            if (selected != null)
-                              widget.onTheme?.call(selected);
-                          },
                           icon: Icon(
                             Theme.of(context).brightness == Brightness.dark
-                                ? Icons.dark_mode_outlined
-                                : Icons.light_mode_outlined,
+                                ? FluentSystemIcons.brightness
+                                : FluentSystemIcons.light,
                           ),
+                          offset: const Offset(0, 12),
+                          constraints: const BoxConstraints(minWidth: 250),
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.surfaceContainerHigh,
+                          elevation: 8,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          onSelected: (selected) =>
+                              widget.onTheme?.call(selected),
+                          itemBuilder: (_) {
+                            final current = themeMode.value;
+                            return [
+                              PopupMenuItem<ThemeMode>(
+                                enabled: false,
+                                height: 76,
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Text(
+                                      'Aparência',
+                                      style: TextStyle(
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.onSurface,
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 16,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      'Escolha como o SysCredi é apresentado',
+                                      style: TextStyle(
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.onSurfaceVariant,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              for (final option in [
+                                (
+                                  ThemeMode.system,
+                                  'Automático',
+                                  FluentSystemIcons.brightness,
+                                ),
+                                (
+                                  ThemeMode.light,
+                                  'Claro',
+                                  FluentSystemIcons.light,
+                                ),
+                                (
+                                  ThemeMode.dark,
+                                  'Escuro',
+                                  FluentSystemIcons.brightness,
+                                ),
+                              ])
+                                PopupMenuItem<ThemeMode>(
+                                  value: option.$1,
+                                  height: 58,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                      vertical: 7,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: current == option.$1
+                                          ? Theme.of(context)
+                                                .colorScheme
+                                                .primary
+                                                .withValues(alpha: .10)
+                                          : Colors.transparent,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Icon(option.$3, size: 19),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Text(
+                                            option.$2,
+                                            style: TextStyle(
+                                              fontWeight: current == option.$1
+                                                  ? FontWeight.w700
+                                                  : FontWeight.w500,
+                                            ),
+                                          ),
+                                        ),
+                                        if (current == option.$1)
+                                          Icon(
+                                            FluentSystemIcons.check,
+                                            size: 18,
+                                            color: Theme.of(
+                                              context,
+                                            ).colorScheme.primary,
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                            ];
+                          },
                         ),
                         IconButton(
                           tooltip: 'Definições',
                           onPressed: busy ? null : () => select('settings'),
-                          icon: const Icon(fluent.FluentIcons.settings),
+                          icon: const Icon(FluentSystemIcons.settings),
                         ),
                         const SizedBox(width: 12),
                         PopupMenuButton<String>(
                           tooltip: 'Conta',
-                          icon: const Icon(Icons.account_circle_outlined),
+                          icon: const Icon(FluentSystemIcons.account),
+                          offset: const Offset(0, 12),
+                          constraints: const BoxConstraints(minWidth: 285),
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.surfaceContainerHigh,
+                          elevation: 8,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
                           onSelected: (value) async {
                             if (value == 'logout')
                               await widget.session.logout();
                             if (value == 'organization')
                               await selectOrganization();
+                            if (value == 'settings' && context.mounted)
+                              select('settings');
                             if (value == 'profile' && context.mounted) {
-                              final profile = widget.session.profile ?? {};
-                              await showDialog<void>(
-                                context: context,
-                                builder: (dialogContext) => AlertDialog(
-                                  title: const Text('Perfil de acesso'),
-                                  content: Text(
-                                    'Nome: ${profile['name'] ?? '—'}\nPerfil: ${_roles[profile['role']] ?? profile['role'] ?? '—'}\nOrganização: ${profile['organization_id'] ?? profile['organizationId'] ?? '—'}',
+                              await _showProfileDialog();
+                            }
+                          },
+                          itemBuilder: (_) {
+                            final profile = widget.session.profile ?? {};
+                            final scheme = Theme.of(context).colorScheme;
+                            final name = '${profile['name'] ?? 'Utilizador'}';
+                            final role =
+                                _roles[profile['role']] ??
+                                '${profile['role'] ?? 'Operador'}';
+                            final organization =
+                                '${profile['organization_name'] ?? profile['organization'] ?? profile['organization_id'] ?? profile['organizationId'] ?? 'Organização actual'}';
+                            final email =
+                                '${profile['email'] ?? 'Acesso autenticado'}';
+                            return [
+                              PopupMenuItem<String>(
+                                enabled: false,
+                                height: 126,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 10,
                                   ),
-                                  actions: [
-                                    TextButton(
-                                      onPressed: () =>
-                                          Navigator.pop(dialogContext),
-                                      child: const Text('Fechar'),
+                                  decoration: BoxDecoration(
+                                    color: scheme.primary.withValues(
+                                      alpha: .08,
+                                    ),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      CircleAvatar(
+                                        radius: 23,
+                                        backgroundColor: scheme.primary,
+                                        child: Text(
+                                          name
+                                              .trim()
+                                              .split(RegExp(r'\s+'))
+                                              .take(2)
+                                              .map((part) => part[0])
+                                              .join()
+                                              .toUpperCase(),
+                                          style: TextStyle(
+                                            color: scheme.onPrimary,
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              name,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.w800,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 2),
+                                            Text(
+                                              email,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                color: scheme.onSurfaceVariant,
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 8),
+                                            Row(
+                                              children: [
+                                                Icon(
+                                                  FluentSystemIcons.check,
+                                                  size: 14,
+                                                  color: scheme.primary,
+                                                ),
+                                                const SizedBox(width: 5),
+                                                Text(
+                                                  'Sessão activa · $role',
+                                                  style: TextStyle(
+                                                    color: scheme.primary,
+                                                    fontSize: 11,
+                                                    fontWeight: FontWeight.w700,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                              PopupMenuItem<String>(
+                                enabled: false,
+                                height: 48,
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      FluentSystemIcons.business,
+                                      size: 18,
+                                      color: scheme.onSurfaceVariant,
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            'Organização',
+                                            style: TextStyle(
+                                              color: scheme.onSurfaceVariant,
+                                              fontSize: 11,
+                                            ),
+                                          ),
+                                          Text(
+                                            organization,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
                                     ),
                                   ],
                                 ),
-                              );
-                            }
-                          },
-                          itemBuilder: (_) => [
-                            PopupMenuItem<String>(
-                              enabled: false,
-                              child: Text(
-                                '${widget.session.profile?['name']}\n${_roles[widget.session.profile?['role']] ?? ''}',
                               ),
-                            ),
-                            const PopupMenuDivider(),
-                            const PopupMenuItem(
-                              value: 'profile',
-                              child: Text('Ver perfil'),
-                            ),
-                            const PopupMenuItem(
-                              value: 'organization',
-                              child: Text('Mudar organização'),
-                            ),
-                            const PopupMenuItem(
-                              value: 'logout',
-                              child: Text('Terminar sessão'),
-                            ),
-                          ],
+                              const PopupMenuDivider(),
+                              const PopupMenuItem(
+                                value: 'profile',
+                                child: ListTile(
+                                  dense: true,
+                                  leading: Icon(FluentSystemIcons.account),
+                                  title: Text('Ver perfil'),
+                                ),
+                              ),
+                              const PopupMenuItem(
+                                value: 'organization',
+                                child: ListTile(
+                                  dense: true,
+                                  leading: Icon(FluentSystemIcons.business),
+                                  title: Text('Mudar organização'),
+                                ),
+                              ),
+                              const PopupMenuItem(
+                                value: 'settings',
+                                child: ListTile(
+                                  dense: true,
+                                  leading: Icon(FluentSystemIcons.settings),
+                                  title: Text('Definições da conta'),
+                                ),
+                              ),
+                              PopupMenuItem(
+                                value: 'logout',
+                                child: ListTile(
+                                  dense: true,
+                                  leading: Icon(
+                                    FluentSystemIcons.close,
+                                    color: Theme.of(context).colorScheme.error,
+                                  ),
+                                  title: Text(
+                                    'Terminar sessão',
+                                    style: TextStyle(
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.error,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ];
+                          },
                         ),
                       ],
                     ),
@@ -2839,30 +4157,6 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            EqualButtonGroup(
-                              spacing: 16,
-                              runSpacing: 12,
-                              children: [
-                                if (route == 'clients')
-                                  OutlinedButton.icon(
-                                    onPressed: busy || loading
-                                        ? null
-                                        : importClients,
-                                    icon: const Icon(Icons.upload_file),
-                                    label: const Text('Importar CSV'),
-                                  ),
-                                if (canCreate)
-                                  FilledButton.icon(
-                                    onPressed: busy || loading ? null : create,
-                                    icon: const Icon(Icons.add),
-                                    label: Text(
-                                      route == 'users'
-                                          ? 'Autorizar utilizador'
-                                          : 'Novo registo',
-                                    ),
-                                  ),
-                              ],
-                            ),
                             if (![
                               'dashboard',
                               'simulator',

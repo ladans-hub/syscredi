@@ -1,5 +1,7 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Icons;
+import '../../../app/theme/fluent_icons_compat.dart';
 import '../../../app/theme/app_theme.dart';
+import '../../../app/theme/design_tokens.dart';
 
 enum Area {
   dashboard,
@@ -60,18 +62,18 @@ extension AreaMeta on Area {
     Area.creditRestructuring => 'Reestruturação do crédito',
   };
   IconData get icon => switch (this) {
-    Area.dashboard => Icons.home_outlined,
-    Area.clients => Icons.people_outline,
+    Area.dashboard => FluentSystemIcons.home,
+    Area.clients => FluentSystemIcons.people,
     Area.applications ||
     Area.creditApproval ||
-    Area.creditAuthorization => Icons.description_outlined,
+    Area.creditAuthorization => FluentSystemIcons.document,
     Area.portfolio ||
     Area.creditStatus ||
-    Area.creditRestructuring => Icons.account_balance_wallet_outlined,
-    Area.collections || Area.creditDisbursement => Icons.payments_outlined,
-    Area.reports => Icons.analytics_outlined,
-    Area.settings => Icons.settings_outlined,
-    _ => Icons.apps_outlined,
+    Area.creditRestructuring => FluentSystemIcons.wallet,
+    Area.collections || Area.creditDisbursement => FluentSystemIcons.payments,
+    Area.reports => FluentSystemIcons.analytics,
+    Area.settings => FluentSystemIcons.settings,
+    _ => FluentSystemIcons.apps,
   };
 }
 
@@ -87,7 +89,7 @@ class SideBar extends StatelessWidget {
   final ValueChanged<String> onSubmenu;
   @override
   Widget build(BuildContext context) => Container(
-    width: 278,
+    width: FluentTokens.navigationWidth,
     decoration: BoxDecoration(
       gradient: LinearGradient(
         begin: Alignment.topLeft,
@@ -103,10 +105,15 @@ class SideBar extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(26, 28, 20, 30),
+            padding: const EdgeInsets.fromLTRB(
+              FluentTokens.space24,
+              FluentTokens.space24,
+              FluentTokens.space20,
+              FluentTokens.space24,
+            ),
             child: Row(
               children: [
-                BrandLogo(size: 34),
+                BrandLogo(size: 64),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Column(
@@ -142,47 +149,47 @@ class SideBar extends StatelessWidget {
                   Area.collections,
                 ])
                   item(a),
-                group('Etapas do crédito', Icons.account_balance_outlined, [
+                group('Etapas do crédito', FluentSystemIcons.document, [
                   subItem(
                     'Análise financeira',
-                    Icons.analytics_outlined,
+                    FluentSystemIcons.analytics,
                     Area.financialAnalysis,
                   ),
                   subItem(
                     'Aprovar crédito',
-                    Icons.check_circle_outline,
+                    FluentSystemIcons.check,
                     Area.creditApproval,
                   ),
                   subItem(
                     'Autorizar crédito',
-                    Icons.verified_outlined,
+                    FluentSystemIcons.check,
                     Area.creditAuthorization,
                   ),
                   subItem(
                     'Desembolso',
-                    Icons.payments_outlined,
+                    FluentSystemIcons.payments,
                     Area.creditDisbursement,
                   ),
                   subItem(
                     'Estado do crédito',
-                    Icons.track_changes_outlined,
+                    FluentSystemIcons.analytics,
                     Area.creditStatus,
                   ),
                   subItem(
                     'Reestruturação do crédito',
-                    Icons.account_balance_outlined,
+                    FluentSystemIcons.wallet,
                     Area.creditRestructuring,
                   ),
                 ]),
-                group('Clientes', Icons.people_outline, [
-                  subItem('Indivíduos', Icons.person_outline, Area.clients),
-                  subItem('Empresas', Icons.business_outlined, Area.clients),
+                group('Clientes', FluentSystemIcons.people, [
+                  subItem('Indivíduos', FluentSystemIcons.person, Area.clients),
+                  subItem('Empresas', FluentSystemIcons.business, Area.clients),
+                  subItem('Avalistas', FluentSystemIcons.shield, Area.clients),
                   subItem(
-                    'Avalistas',
-                    Icons.verified_user_outlined,
+                    'Co-assinantes',
+                    FluentSystemIcons.people,
                     Area.clients,
                   ),
-                  subItem('Co-assinantes', Icons.group_outlined, Area.clients),
                 ]),
                 item(Area.reports),
                 const Padding(
@@ -198,60 +205,64 @@ class SideBar extends StatelessWidget {
                 ),
                 for (final a in [Area.simulator, Area.products, Area.risk])
                   item(a),
-                group('Financeiro', Icons.attach_money, [
+                group('Financeiro', FluentSystemIcons.payments, [
                   subItem(
                     'Saldos e contas',
-                    Icons.account_balance_wallet_outlined,
+                    FluentSystemIcons.wallet,
                     Area.accounts,
                   ),
                   subItem(
                     'Movimentos de caixa',
-                    Icons.swap_horiz_outlined,
+                    FluentSystemIcons.sync,
                     Area.treasury,
                   ),
                   subItem(
                     'Conciliação bancária',
-                    Icons.fact_check_outlined,
+                    FluentSystemIcons.check,
                     Area.reconciliation,
                   ),
-                  subItem('Estornos', Icons.undo_outlined, Area.portfolio),
+                  subItem(
+                    'Estornos',
+                    FluentSystemIcons.refresh,
+                    Area.portfolio,
+                  ),
                 ]),
-                group('Parametrização', Icons.tune_outlined, [
+                group('Parametrização', FluentSystemIcons.settings, [
                   subItem(
                     'Produtos de crédito',
-                    Icons.category_outlined,
+                    FluentSystemIcons.apps,
                     Area.products,
                   ),
                   subItem(
                     'Definições institucionais',
-                    Icons.settings_outlined,
+                    FluentSystemIcons.settings,
                     Area.settings,
                   ),
                 ]),
-                group('Gestão de logs', Icons.lock_clock_outlined, [
-                  subItem('Auditoria', Icons.history_outlined, Area.audit),
+                group('Gestão de logs', FluentSystemIcons.lock, [
+                  subItem('Auditoria', FluentSystemIcons.history, Area.audit),
                 ]),
-                group('Administração', Icons.admin_panel_settings_outlined, [
+                group('Administração', FluentSystemIcons.settings, [
                   subItem(
                     'Contabilidade',
-                    Icons.menu_book_outlined,
+                    FluentSystemIcons.document,
                     Area.accounting,
                   ),
-                  subItem('Sincronização', Icons.sync_outlined, Area.sync),
-                  subItem('Alertas AML', Icons.shield_outlined, Area.aml),
+                  subItem('Sincronização', FluentSystemIcons.sync, Area.sync),
+                  subItem('Alertas AML', FluentSystemIcons.shield, Area.aml),
                   subItem(
                     'Gerir utilizadores',
-                    Icons.group_outlined,
+                    FluentSystemIcons.people,
                     Area.users,
                   ),
                   subItem(
                     'Cópias de segurança',
-                    Icons.backup_outlined,
+                    FluentSystemIcons.download,
                     Area.backup,
                   ),
                 ]),
-                group('Instruções do sistema', Icons.video_library_outlined, [
-                  subItem('Guia rápido', Icons.help_outline, Area.faq),
+                group('Instruções do sistema', FluentSystemIcons.help, [
+                  subItem('Guia rápido', FluentSystemIcons.help, Area.faq),
                 ]),
               ],
             ),
@@ -262,7 +273,7 @@ class SideBar extends StatelessWidget {
               padding: const EdgeInsets.all(18),
               decoration: BoxDecoration(
                 color: Colors.white.withValues(alpha: .06),
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(FluentTokens.radius12),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -446,7 +457,7 @@ class AccountMenuHeader extends StatelessWidget {
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
-          borderRadius: BorderRadius.circular(15),
+          borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: palette.primary.withValues(alpha: dark ? .42 : .20),
           ),
@@ -606,7 +617,7 @@ class AccountMenuItem extends StatelessWidget {
               color: (danger ? Colors.redAccent : color ?? green).withValues(
                 alpha: .10,
               ),
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(
               icon,
@@ -677,7 +688,7 @@ class _AccountDialog extends StatelessWidget {
     return Dialog(
       elevation: 18,
       backgroundColor: surface,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 520),
         child: Column(
@@ -695,7 +706,7 @@ class _AccountDialog extends StatelessWidget {
                       : [palette.primary.withValues(alpha: .13), Colors.white],
                 ),
                 borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(20),
+                  top: Radius.circular(12),
                 ),
               ),
               child: Row(
@@ -817,7 +828,7 @@ class _AccountDialog extends StatelessWidget {
         height: 38,
         decoration: BoxDecoration(
           color: brandPalette.value.primary.withValues(alpha: .10),
-          borderRadius: BorderRadius.circular(11),
+          borderRadius: BorderRadius.circular(8),
         ),
         child: Icon(icon, size: 20, color: brandPalette.value.primary),
       ),

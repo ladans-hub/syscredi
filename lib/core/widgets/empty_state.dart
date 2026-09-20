@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Icons;
+import '../../app/theme/fluent_icons_compat.dart';
 
 class EmptyState extends StatelessWidget {
   const EmptyState({required this.title, required this.message, super.key});
