@@ -1,46 +1,169 @@
 import 'package:flutter/material.dart' hide Icons;
 
 import '../../../app/theme/design_tokens.dart';
+import '../../../app/theme/app_theme.dart';
 import '../../../app/theme/fluent_icons_compat.dart';
 import '../../../core/widgets/operation_feedback.dart';
+import '../domain/repository.dart';
 
 /// Operações de crédito agrupadas por etapa do ciclo de vida.
 ///
-/// A página usa dados locais para manter o fluxo explorável mesmo quando o
-/// ambiente ainda não tem dados remotos. As ações já alteram estado local e
-/// servem como contrato visual para a integração com a API.
 class CreditStagesView extends StatefulWidget {
-  const CreditStagesView({required this.stage, super.key});
+  const CreditStagesView({
+    required this.stage,
+    required this.repository,
+    super.key,
+  });
   final String stage;
+  final Repository repository;
 
   @override
   State<CreditStagesView> createState() => _CreditStagesViewState();
 }
 
 class _CreditStagesViewState extends State<CreditStagesView> {
-  static const _clients = [
-    'Adelino Armando de Sousa',
-    'Júlio Custódio',
-    'Francisco Adelino Rui',
-    'Armando Manuel Antonio Munhangane',
-    'Edson Mário Morais',
-    'Elisabete Celeste Luis Piwalo',
-  ];
-  static const _processes = [
-    'CR-2026-0303 · Adelino Armando de Sousa',
-    'CR-2026-0298 · Júlio Custódio',
-    'CR-2026-0287 · Francisco Adelino Rui',
-    'CR-2026-0274 · Armando Manuel Antonio Munhangane',
-  ];
-  static const _authorizers = [
-    'Naveia Muaquiquia João · Gestor de Crédito',
-    'Marta João · Directora de Operações',
-    'Celso Macuácua · Comité de Crédito',
-  ];
-  late final List<_CreditCase> _cases = _seed(widget.stage);
+  final List<String> _clients = [];
+  final List<String> _processes = [];
+  final List<String> _authorizers = [];
+  final Map<String, String> _accounts = {};
+  final Map<String, String> _clientIds = {};
+  final List<Map<String, dynamic>> _products = [];
+  final List<_CreditCase> _cases = [];
   String filter = 'Todos';
   String query = '';
   _CreditCase? selected;
+  bool loading = true;
+  bool refreshing = false;
+  String? error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant CreditStagesView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.stage != widget.stage) _load();
+  }
+
+  Future<void> _load() async {
+    final initialLoad = _cases.isEmpty;
+    setState(() {
+      loading = initialLoad;
+      refreshing = !initialLoad;
+      error = null;
+      if (initialLoad) selected = null;
+    });
+    try {
+      final loans =
+          widget.stage == 'credit-status' ||
+          widget.stage == 'credit-restructuring';
+      final results = await Future.wait<dynamic>([
+        widget.repository.get(
+          loans ? '/loans?limit=100&offset=0' : '/requests?limit=100&offset=0',
+        ),
+        widget.repository.get('/clients?limit=100&offset=0'),
+        widget.repository.get('/requests?limit=100&offset=0'),
+        widget.repository.get('/users?limit=100&offset=0'),
+        widget.repository.get('/payment-accounts'),
+        widget.repository.get('/products?limit=100&offset=0'),
+      ]);
+      final data = results[0];
+      if (!mounted) return;
+      setState(() {
+        _cases
+          ..clear()
+          ..addAll(
+            (data as List).map(
+              (row) => _CreditCase.fromJson(
+                Map<String, dynamic>.from(row as Map),
+                loan: loans,
+              ),
+            ),
+          );
+        _clients
+          ..clear()
+          ..addAll(
+            (results[1] as List)
+                .map((row) => '${(row as Map)['name'] ?? ''}'.trim())
+                .where((name) => name.isNotEmpty),
+          );
+        _clientIds
+          ..clear()
+          ..addEntries(
+            (results[1] as List)
+                .map((row) {
+                  final value = row as Map;
+                  return MapEntry(
+                    '${value['name'] ?? ''}'.trim(),
+                    '${value['id'] ?? ''}',
+                  );
+                })
+                .where(
+                  (entry) => entry.key.isNotEmpty && entry.value.isNotEmpty,
+                ),
+          );
+        _processes
+          ..clear()
+          ..addAll(
+            (results[2] as List)
+                .map((row) {
+                  final value = row as Map;
+                  final reference = '${value['number'] ?? value['id'] ?? ''}';
+                  final client = '${value['client_name'] ?? ''}'.trim();
+                  return client.isEmpty ? reference : '$reference · $client';
+                })
+                .where((value) => value.isNotEmpty),
+          );
+        _authorizers
+          ..clear()
+          ..addAll(
+            (results[3] as List)
+                .map((row) {
+                  final value = row as Map;
+                  final name = '${value['name'] ?? ''}'.trim();
+                  final role = '${value['role'] ?? ''}'.trim();
+                  return role.isEmpty ? name : '$name · $role';
+                })
+                .where((value) => value.isNotEmpty),
+          );
+        _accounts
+          ..clear()
+          ..addEntries(
+            (results[4] as List)
+                .map((row) {
+                  final value = row as Map;
+                  final id = '${value['id'] ?? ''}';
+                  final name = '${value['name'] ?? ''}'.trim();
+                  final currency = '${value['currency'] ?? ''}'.trim();
+                  return MapEntry(
+                    id,
+                    currency.isEmpty ? name : '$name · $currency',
+                  );
+                })
+                .where((entry) => entry.key.isNotEmpty),
+          );
+        _products
+          ..clear()
+          ..addAll(
+            (results[5] as List)
+                .map((row) => Map<String, dynamic>.from(row as Map))
+                .where((row) => row['active'] != false),
+          );
+      });
+    } catch (failure) {
+      if (mounted) setState(() => error = '$failure');
+    } finally {
+      if (mounted) {
+        setState(() {
+          loading = false;
+          refreshing = false;
+        });
+      }
+    }
+  }
 
   _StageMeta get meta => _stageMeta[widget.stage] ?? _stageMeta['financing']!;
 
@@ -64,6 +187,14 @@ class _CreditStagesViewState extends State<CreditStagesView> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _header(context, scheme),
+            if (error != null) ...[
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: _load,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Tentar novamente'),
+              ),
+            ],
             const SizedBox(height: 18),
             _kpis(context, scheme),
             const SizedBox(height: 18),
@@ -237,7 +368,22 @@ class _CreditStagesViewState extends State<CreditStagesView> {
             ],
           ),
           const SizedBox(height: 18),
-          if (visible.isEmpty)
+          if (refreshing) const LinearProgressIndicator(),
+          if (loading && _cases.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(28),
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SyscrediProgressIndicator(size: 42),
+                    SizedBox(height: 16),
+                    Text('A carregar processos de crédito…'),
+                  ],
+                ),
+              ),
+            )
+          else if (visible.isEmpty)
             const Padding(
               padding: EdgeInsets.all(28),
               child: Center(
@@ -633,7 +779,51 @@ class _CreditStagesViewState extends State<CreditStagesView> {
       await _openStageForm(context, item);
       return;
     }
-    var selectedClient = item?.client ?? _clients.first;
+    if (loading || refreshing) {
+      await showFeedbackDialog(
+        context,
+        title: 'Dados a carregar',
+        message:
+            'Os clientes e produtos de crédito ainda estão a ser carregados. Aguarde alguns instantes e tente novamente.',
+        kind: FeedbackKind.info,
+      );
+      return;
+    }
+    if (_clients.isEmpty || _products.isEmpty) {
+      await showFeedbackDialog(
+        context,
+        title: 'Dados indisponíveis',
+        message:
+            'É necessário cadastrar um cliente e um produto de crédito activo.',
+        success: false,
+      );
+      return;
+    }
+    final clientOptions = _clientIds.entries
+        .map((entry) => (id: entry.value, name: entry.key))
+        .where((entry) => _isDatabaseUuid(entry.id))
+        .toList();
+    if (clientOptions.isEmpty) {
+      await showFeedbackDialog(
+        context,
+        title: 'Clientes indisponíveis',
+        message:
+            'Não foi possível obter os identificadores dos clientes. Actualize a tela e tente novamente.',
+        success: false,
+      );
+      return;
+    }
+    final initialClient = item == null
+        ? clientOptions.first
+        : clientOptions.firstWhere(
+            (entry) => entry.name == item.client,
+            orElse: () => clientOptions.first,
+          );
+    var selectedClient = initialClient.name;
+    var selectedClientId = initialClient.id;
+    var selectedProductId = item == null
+        ? '${_products.first['id'] ?? ''}'
+        : '${_products.firstWhere((row) => '${row['name'] ?? ''}' == item.product, orElse: () => _products.first)['id'] ?? ''}';
     final amount = TextEditingController(
       text: item?.amount.toStringAsFixed(2) ?? '12500',
     );
@@ -656,9 +846,10 @@ class _CreditStagesViewState extends State<CreditStagesView> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     FormField<String>(
-                      initialValue: selectedClient,
-                      validator: (value) => value == null || value.isEmpty
-                          ? 'Seleccione o cliente.'
+                      initialValue: selectedClientId,
+                      validator: (value) =>
+                          !clientOptions.any((entry) => entry.id == value)
+                          ? 'Seleccione um cliente válido.'
                           : null,
                       builder: (field) => InkWell(
                         onTap: () async {
@@ -667,11 +858,11 @@ class _CreditStagesViewState extends State<CreditStagesView> {
                             context: dialogContext,
                             builder: (pickerContext) => StatefulBuilder(
                               builder: (pickerContext, pickerSetState) {
-                                final matches = _clients
+                                final matches = clientOptions
                                     .where(
-                                      (client) => client.toLowerCase().contains(
-                                        query.trim().toLowerCase(),
-                                      ),
+                                      (client) => client.name
+                                          .toLowerCase()
+                                          .contains(query.trim().toLowerCase()),
                                     )
                                     .toList();
                                 return AlertDialog(
@@ -709,15 +900,15 @@ class _CreditStagesViewState extends State<CreditStagesView> {
                                                           Icons.person_outline,
                                                         ),
                                                         title: Text(
-                                                          matches[index],
+                                                          matches[index].name,
                                                         ),
                                                         selected:
-                                                            matches[index] ==
-                                                            selectedClient,
+                                                            matches[index].id ==
+                                                            selectedClientId,
                                                         onTap: () =>
                                                             Navigator.pop(
                                                               pickerContext,
-                                                              matches[index],
+                                                              matches[index].id,
                                                             ),
                                                       ),
                                                 ),
@@ -730,7 +921,11 @@ class _CreditStagesViewState extends State<CreditStagesView> {
                             ),
                           );
                           if (value != null) {
-                            selectedClient = value;
+                            final picked = clientOptions.firstWhere(
+                              (entry) => entry.id == value,
+                            );
+                            selectedClient = picked.name;
+                            selectedClientId = picked.id;
                             field.didChange(value);
                             dialogSetState(() {});
                           }
@@ -749,6 +944,33 @@ class _CreditStagesViewState extends State<CreditStagesView> {
                           ),
                         ),
                       ),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      initialValue: selectedProductId.isEmpty
+                          ? null
+                          : selectedProductId,
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Produto de crédito',
+                        prefixIcon: Icon(Icons.apps),
+                      ),
+                      items: [
+                        for (final product in _products)
+                          DropdownMenuItem(
+                            value: '${product['id'] ?? ''}',
+                            child: Text(
+                              '${product['name'] ?? 'Produto'}',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                      ],
+                      onChanged: item == null
+                          ? (value) => selectedProductId = value ?? ''
+                          : null,
+                      validator: (value) => value == null || value.isEmpty
+                          ? 'Seleccione o produto de crédito.'
+                          : null,
                     ),
                     const SizedBox(height: 12),
                     Row(
@@ -813,41 +1035,81 @@ class _CreditStagesViewState extends State<CreditStagesView> {
     );
     if (result != true) return;
     if (!mounted) return;
-    final updated = _CreditCase(
-      item?.reference ?? 'FIN-${1000 + _cases.length}',
-      selectedClient,
-      double.parse(amount.text),
-      int.parse(term.text),
-      item?.owner ?? 'Naveia Muaquiquia',
-      item?.status ?? meta.statuses.first,
-      item?.progress ?? 0,
-      item?.attention ?? true,
-      item?.product ?? 'Microcrédito Crescer',
-      'Hoje',
-      notes.text.trim(),
-    );
-    setState(() {
+    try {
+      final amountCents = (double.parse(amount.text) * 100).round();
+      final months = int.parse(term.text);
       if (item == null) {
-        _cases.insert(0, updated);
+        final validClient = clientOptions.any(
+          (entry) => entry.id == selectedClientId,
+        );
+        final validProduct = _products.any(
+          (product) => '${product['id'] ?? ''}' == selectedProductId,
+        );
+        if (!validClient || !validProduct) {
+          throw const ApiFailure('Cliente ou produto de crédito indisponível.');
+        }
+        await widget.repository.write('POST', '/requests', {
+          'clientId': selectedClientId,
+          'productId': selectedProductId,
+          'amountCents': amountCents,
+          'months': months,
+        });
       } else {
-        final index = _cases.indexOf(item);
-        if (index >= 0) _cases[index] = updated;
-        selected = updated;
+        final product = _products.firstWhere(
+          (row) => '${row['name'] ?? ''}' == item.product,
+          orElse: () =>
+              _products.isEmpty ? <String, dynamic>{} : _products.first,
+        );
+        if (product.isEmpty) {
+          throw const ApiFailure('Produto de crédito indisponível.');
+        }
+        await widget.repository
+            .write('POST', '/requests/${item.id}/financing', {
+              'amountCents': amountCents,
+              'months': months,
+              'annualRateBps': product['annual_rate_bps'] ?? 0,
+              'paymentFrequency': product['payment_frequency'] ?? 'monthly',
+              'interestMethod': product['interest_method'] ?? 'flat',
+              if (notes.text.trim().isNotEmpty) 'conditions': notes.text.trim(),
+              'version': item.version,
+            });
       }
-    });
-    await showFeedbackDialog(
-      context,
-      title: 'Processo guardado',
-      message: 'Processo guardado localmente.',
-      success: true,
-    );
+      await _load();
+      if (context.mounted) {
+        await showFeedbackDialog(
+          context,
+          title: 'Processo guardado',
+          message: 'Processo confirmado pelo servidor.',
+          success: true,
+        );
+      }
+    } catch (failure) {
+      if (context.mounted) {
+        await showFeedbackDialog(
+          context,
+          title: 'Não foi possível guardar',
+          message: '$failure',
+          success: false,
+        );
+      }
+    }
   }
+
+  bool _isDatabaseUuid(String value) => RegExp(
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+  ).hasMatch(value);
 
   Future<void> _openStageForm(BuildContext context, [_CreditCase? item]) async {
     final specs = _stageFields(widget.stage, item);
-    var selectedClient = item?.client ?? _clients.first;
-    var selectedProcess = _processes.first;
-    var selectedResponsible = _authorizers.first;
+    var selectedClient =
+        item?.client ?? (_clients.isEmpty ? '' : _clients.first);
+    var selectedProcess = item == null
+        ? (_processes.isEmpty ? '' : _processes.first)
+        : _processes.firstWhere(
+            (value) => value.startsWith(item.reference),
+            orElse: () => item.reference,
+          );
+    var selectedResponsible = _authorizers.isEmpty ? '' : _authorizers.first;
     final controllers = <String, TextEditingController>{};
     final selections = <String, String>{};
     for (final field in specs) {
@@ -986,12 +1248,82 @@ class _CreditStagesViewState extends State<CreditStagesView> {
       }
     });
     if (saved != true || !mounted) return;
-    await showFeedbackDialog(
-      context,
-      title: 'Registo guardado',
-      message: '${meta.title} registada localmente.',
-      success: true,
-    );
+    try {
+      final target = item ?? selected;
+      if (target == null) {
+        throw const ApiFailure('Seleccione um processo antes de continuar.');
+      }
+      switch (widget.stage) {
+        case 'financial-analysis':
+          int cents(String key) =>
+              ((double.tryParse(controllers[key]?.text ?? '') ?? 0) * 100)
+                  .round();
+          await widget.repository
+              .write('POST', '/requests/${target.id}/financial-analysis', {
+                'incomeCents': cents('income'),
+                'expensesCents': cents('expenses'),
+                'obligationsCents': cents('debt'),
+                'opinion': selections['opinion'] ?? 'conditional',
+                'creditHistory': controllers['history']?.text.trim() ?? '',
+                'guarantees': controllers['guarantees']?.text.trim() ?? '',
+                if ((controllers['notes']?.text.trim() ?? '').isNotEmpty)
+                  'notes': controllers['notes']!.text.trim(),
+                'version': target.version,
+              });
+        case 'credit-approval':
+          final decision = selections['decision'] == 'rejected'
+              ? 'rejected'
+              : 'approved';
+          final reason = controllers['conditions']?.text.trim() ?? '';
+          await widget.repository
+              .write('PATCH', '/requests/${target.id}/stage', {
+                'stage': decision,
+                if (reason.isNotEmpty) 'reason': reason,
+                'version': target.version,
+              });
+        case 'credit-authorization':
+          final returned = selections['approval'] == 'returned';
+          final notes = controllers['notes']?.text.trim() ?? '';
+          await widget.repository
+              .write('POST', '/requests/${target.id}/authorization', {
+                'decision': returned ? 'returned' : 'authorized',
+                if (notes.isNotEmpty) 'notes': notes,
+                'version': target.version,
+              });
+        case 'credit-disbursement':
+          final accountId = selections['account'];
+          if (accountId == null || accountId.isEmpty) {
+            throw const ApiFailure('Seleccione uma conta de origem.');
+          }
+          await widget.repository.write(
+            'POST',
+            '/requests/${target.id}/disburse',
+            {'accountId': accountId},
+          );
+        default:
+          throw const ApiFailure(
+            'Esta etapa ainda não possui persistência remota disponível.',
+          );
+      }
+      await _load();
+      if (context.mounted) {
+        await showFeedbackDialog(
+          context,
+          title: 'Registo guardado',
+          message: '${meta.title} confirmada pelo servidor.',
+          success: true,
+        );
+      }
+    } catch (failure) {
+      if (context.mounted) {
+        await showFeedbackDialog(
+          context,
+          title: 'Não foi possível guardar',
+          message: '$failure',
+          success: false,
+        );
+      }
+    }
   }
 
   Widget _clientSelector(
@@ -1373,28 +1705,21 @@ class _CreditStagesViewState extends State<CreditStagesView> {
           _StageField('notes', 'Observações formais', multiline: true),
         ];
       case 'credit-disbursement':
-        return const [
-          _StageField(
+        return [
+          const _StageField(
             'client',
             'Cliente',
             initial: 'Adelino Armando de Sousa',
             clientPicker: true,
           ),
-          _StageField(
+          const _StageField(
             'contract',
             'Contrato autorizado',
             initial: 'CR-2026-0303',
             processPicker: true,
           ),
-          _StageField(
-            'account',
-            'Conta de origem',
-            options: {
-              'main': 'Conta operacional · 0031',
-              'cash': 'Caixa principal',
-            },
-          ),
-          _StageField(
+          _StageField('account', 'Conta de origem', options: _accounts),
+          const _StageField(
             'method',
             'Método de desembolso',
             options: {
@@ -1404,20 +1729,24 @@ class _CreditStagesViewState extends State<CreditStagesView> {
               'cash': 'Numerário',
             },
           ),
-          _StageField(
+          const _StageField(
             'amount',
             'Montante a desembolsar (MT)',
             initial: '12500',
             numeric: true,
           ),
-          _StageField('date', 'Data de desembolso', initial: '20/09/2026'),
-          _StageField(
+          const _StageField(
+            'date',
+            'Data de desembolso',
+            initial: '22/09/2026',
+          ),
+          const _StageField(
             'fees',
             'Taxas administrativas (MT)',
             initial: '0',
             numeric: true,
           ),
-          _StageField(
+          const _StageField(
             'receipt',
             'Comprovativo / referência externa',
             initial: 'A preencher após confirmação',
@@ -1538,68 +1867,13 @@ class _CreditStagesViewState extends State<CreditStagesView> {
       selected = _cases[index];
     });
   }
-
-  static List<_CreditCase> _seed(String stage) {
-    final config = _stageMeta[stage] ?? _stageMeta['financing']!;
-    return [
-      _CreditCase(
-        'CR-2026-0303',
-        'Adelino Armando de Sousa',
-        5640,
-        3,
-        'Naveia Muaquiquia',
-        config.statuses.first,
-        2,
-        true,
-        'Linha Crescer',
-        'Hoje',
-        'Documentos de rendimento pendentes.',
-      ),
-      _CreditCase(
-        'CR-2026-0298',
-        'Júlio Custódio',
-        25000,
-        6,
-        'Marta João',
-        config.statuses.length > 1 ? config.statuses[1] : config.statuses.first,
-        3,
-        false,
-        'Microcrédito Comércio',
-        'Ontem',
-        'Cliente regular.',
-      ),
-      _CreditCase(
-        'CR-2026-0287',
-        'Francisco Adelino Rui',
-        12500,
-        4,
-        'Naveia Muaquiquia',
-        'Concluído',
-        4,
-        false,
-        'Linha Agro',
-        '08/09/2026',
-        'Análise concluída com parecer favorável.',
-      ),
-      _CreditCase(
-        'CR-2026-0274',
-        'Armando Manuel Antonio Munhangane',
-        5000,
-        1,
-        'Celso Macuácua',
-        config.statuses.first,
-        1,
-        true,
-        'Microcrédito Rápido',
-        '07/09/2026',
-        'Aguardando validação documental.',
-      ),
-    ];
-  }
 }
 
 class _CreditCase {
   _CreditCase(
+    this.id,
+    this.version,
+    this.rawStage,
     this.reference,
     this.client,
     this.amount,
@@ -1612,16 +1886,65 @@ class _CreditCase {
     this.updated,
     this.notes,
   );
+  final String id, rawStage;
+  final int version;
   final String reference, client, owner, status, product, updated, notes;
   final double amount;
   final int term, progress;
   final bool attention;
+  factory _CreditCase.fromJson(Map<String, dynamic> row, {required bool loan}) {
+    final stage = '${row['stage'] ?? row['status'] ?? ''}';
+    final progress = switch (stage) {
+      'documentation' => 1,
+      'analysis' => 2,
+      'committee' => 3,
+      'approved' => 4,
+      'disbursed' || 'active' || 'paid' => 4,
+      _ => 0,
+    };
+    final status = switch (stage) {
+      'documentation' => 'Novo',
+      'analysis' => 'Em análise',
+      'committee' => 'Em revisão',
+      'approved' => 'Aprovado',
+      'rejected' => 'Recusado',
+      'disbursed' => 'Concluído',
+      'active' => 'Vigente',
+      'paid' => 'Liquidado',
+      'overdue' => 'Malparado',
+      _ => stage.isEmpty ? 'Pendente' : stage,
+    };
+    final cents =
+        num.tryParse(
+          '${loan ? row['balance_cents'] ?? row['principal_cents'] : row['amount_cents']}',
+        ) ??
+        0;
+    return _CreditCase(
+      '${row['id'] ?? ''}',
+      int.tryParse('${row['version'] ?? 1}') ?? 1,
+      stage,
+      '${row['number'] ?? row['id'] ?? ''}',
+      '${row['client_name'] ?? row['name'] ?? 'Cliente'}',
+      cents / 100,
+      int.tryParse('${row['months'] ?? 0}') ?? 0,
+      '${row['officer_name'] ?? row['created_by_name'] ?? 'Equipa de crédito'}',
+      status,
+      progress,
+      ['rejected', 'overdue'].contains(stage),
+      '${row['product_name'] ?? row['currency'] ?? 'Crédito'}',
+      '${row['updated_at'] ?? row['created_at'] ?? ''}',
+      '${row['reason'] ?? ''}',
+    );
+  }
   _CreditCase copyWith({
     String? status,
     bool? attention,
     int? progress,
     String? updated,
   }) => _CreditCase(
+    id,
+    version,
+    rawStage,
     reference,
     client,
     amount,

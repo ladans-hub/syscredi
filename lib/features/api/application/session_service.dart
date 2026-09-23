@@ -2,7 +2,8 @@ import 'dart:async';
 import '../domain/repository.dart';
 
 class SessionService {
-  SessionService(this.auth, this.repository) {
+  SessionService(this.auth, this.repository, {Repository? guestRepository})
+    : _guestRepository = guestRepository {
     _subscription = auth.sessionChanges.listen(
       (valid) {
         if (!valid) {
@@ -19,6 +20,9 @@ class SessionService {
   }
   final AuthGateway auth;
   final Repository repository;
+  final Repository? _guestRepository;
+  Repository get activeRepository =>
+      profile?['guest'] == true ? (_guestRepository ?? repository) : repository;
   final _changes = StreamController<void>.broadcast(sync: true);
   StreamSubscription<bool>? _subscription;
   Stream<void> get changes => _changes.stream;
@@ -41,7 +45,8 @@ class SessionService {
       'id': 'guest',
       'name': 'Visitante',
       'email': 'guest@syscredi.local',
-      'role': 'manager',
+      'role': 'operator',
+      'active': true,
       'guest': true,
     };
     _changes.add(null);
@@ -121,6 +126,7 @@ class SessionService {
   }
 
   Future<void> verify() async {
+    if (profile?['guest'] == true) return;
     try {
       final current = Map<String, dynamic>.from(await repository.get('/me'));
       if (!['operator', 'analyst', 'manager'].contains(current['role']) ||
@@ -144,7 +150,7 @@ class SessionService {
   }
 
   Future<void> logout() async {
-    await auth.logout();
+    if (profile?['guest'] != true) await auth.logout();
     profile = null;
     _changes.add(null);
   }

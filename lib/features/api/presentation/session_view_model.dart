@@ -20,7 +20,7 @@ class AppSession extends WorkspaceSession {
   final SessionService service;
   StreamSubscription<void>? _subscription;
   @override
-  Repository get api => service.repository;
+  Repository get api => service.activeRepository;
   @override
   Json? get profile => service.profile;
   String? get error => service.error;

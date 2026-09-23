@@ -6,6 +6,7 @@ import '../config/config.dart';
 import '../../features/api/application/session_service.dart';
 import '../../features/api/domain/repository.dart';
 import '../../features/api/infrastructure/supabase_auth_gateway.dart';
+import '../../features/api/infrastructure/guest_repository.dart';
 import '../../features/api/presentation/session_view_model.dart';
 
 Future<AppSession> connectAuthOnly() async {
@@ -16,7 +17,11 @@ Future<AppSession> connectAuthOnly() async {
     authOptions: const FlutterAuthClientOptions(detectSessionInUri: false),
   );
   final auth = SupabaseAuthGateway(Supabase.instance.client);
-  final session = SessionService(auth, _MockRepository(auth));
+  final session = SessionService(
+    auth,
+    _MockRepository(auth),
+    guestRepository: const GuestRepository(),
+  );
   await session.restore();
   return AppSession(session);
 }
@@ -120,7 +125,7 @@ class _MockRepository implements Repository {
       };
     }
     return {
-      'id': auth.userId ?? 'mock-user',
+      'id': auth.userId ?? 'session-user',
       'name':
           auth.client.auth.currentUser?.userMetadata?['name'] ?? 'Utilizador',
       'email': auth.client.auth.currentUser?.email ?? '',

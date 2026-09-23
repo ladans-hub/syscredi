@@ -91,11 +91,13 @@ extension AreaMeta on Area {
 class SideBar extends StatelessWidget {
   const SideBar({
     required this.area,
+    required this.activeRoute,
     required this.onTap,
     required this.onSubmenu,
     super.key,
   });
   final Area area;
+  final String activeRoute;
   final ValueChanged<Area> onTap;
   final ValueChanged<String> onSubmenu;
   @override
@@ -439,47 +441,112 @@ class SideBar extends StatelessWidget {
     ),
   );
 
-  Widget subItem(String title, IconData icon, Area target) => ListTile(
-    dense: true,
-    leading: !brandVisuals.value.navigationIcons
-        ? null
-        : Icon(icon, size: 20, color: const Color(0xFFB9C7D5)),
-    title: Text(
-      title,
-      style: const TextStyle(color: Color(0xFFB9C7D5), fontSize: 13),
-    ),
-    onTap: () {
-      if (title == 'Indivíduos' ||
-          title == 'Empresas' ||
-          title == 'Avalistas' ||
-          title == 'Co-assinantes' ||
-          title == 'Estornos' ||
-          title == 'Receitas' ||
-          title == 'Despesas' ||
-          title == 'Desembolsos' ||
-          title == 'Reembolsos' ||
-          title == 'Saldos' ||
-          title == 'Prestações Vencidas' ||
-          title == 'Ativos' ||
-          title == 'Desembolsos' ||
-          title == 'Receitas' ||
-          title == 'Despesas' ||
-          title == 'Em PDF' ||
-          title == 'Em Excel' ||
-          title == 'Registos' ||
-          title == 'Cartas' ||
-          title == 'Mensal para BM' ||
-          title == 'Trimestral para BM' ||
-          title == 'Créditos' ||
-          title == 'Clientes' ||
-          title == 'Financeiros' ||
-          title == 'Diversos') {
-        onSubmenu(title);
-      } else {
-        onTap(target);
-      }
+  Widget subItem(String title, IconData icon, Area target) {
+    final selected = _routeForSubmenu(title, target) == activeRoute;
+    final foreground = selected ? Colors.white : const Color(0xFFB9C7D5);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 3),
+      child: Material(
+        color: selected
+            ? brandPalette.value.primary.withValues(alpha: .30)
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(9),
+        child: ListTile(
+          dense: true,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
+          leading: !brandVisuals.value.navigationIcons
+              ? null
+              : Icon(icon, size: 20, color: foreground),
+          title: Text(
+            title,
+            style: TextStyle(
+              color: foreground,
+              fontSize: 13,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.normal,
+            ),
+          ),
+          trailing: selected
+              ? const Icon(Icons.check, size: 17, color: Colors.white)
+              : null,
+          onTap: () {
+            if (title == 'Indivíduos' ||
+                title == 'Empresas' ||
+                title == 'Avalistas' ||
+                title == 'Co-assinantes' ||
+                title == 'Estornos' ||
+                title == 'Receitas' ||
+                title == 'Despesas' ||
+                title == 'Desembolsos' ||
+                title == 'Reembolsos' ||
+                title == 'Saldos' ||
+                title == 'Prestações Vencidas' ||
+                title == 'Ativos' ||
+                title == 'Desembolsos' ||
+                title == 'Receitas' ||
+                title == 'Despesas' ||
+                title == 'Em PDF' ||
+                title == 'Em Excel' ||
+                title == 'Registos' ||
+                title == 'Cartas' ||
+                title == 'Mensal para BM' ||
+                title == 'Trimestral para BM' ||
+                title == 'Créditos' ||
+                title == 'Clientes' ||
+                title == 'Financeiros' ||
+                title == 'Diversos') {
+              onSubmenu(title);
+            } else {
+              onTap(target);
+            }
+          },
+        ),
+      ),
+    );
+  }
+
+  String _routeForSubmenu(String title, Area target) => switch (title) {
+    'Indivíduos' => 'clients',
+    'Empresas' => 'businesses',
+    'Avalistas' => 'client-guarantors',
+    'Co-assinantes' => 'co-signers',
+    'Em PDF' || 'Créditos' => 'report-credit',
+    'Em Excel' || 'Clientes' => 'report-client',
+    'Registos' => 'report-registers',
+    'Cartas' => 'report-letters',
+    'Mensal para BM' => 'report-bom-monthly',
+    'Trimestral para BM' => 'report-bom-quarterly',
+    'Financeiros' => 'report-financial',
+    'Diversos' => 'report-misc',
+    'Saldos' => 'finance-balances',
+    'Estornos' => 'finance-reversals',
+    'Receitas' => 'finance-income',
+    'Despesas' => 'finance-expenses',
+    'Desembolsos' =>
+      target == Area.creditDisbursement
+          ? 'credit-disbursement'
+          : 'finance-disbursements',
+    'Reembolsos' => 'finance-refunds',
+    'Prestações Vencidas' => 'finance-overdue',
+    'Ativos' => 'finance-assets',
+    'Produtos de crédito' => 'products',
+    'Definições institucionais' => 'settings',
+    'Auditoria' => 'audit',
+    'Contabilidade' => 'admin-accounting',
+    'Sincronização' => 'admin-sync',
+    'Alertas AML' => 'admin-aml',
+    'Gerir utilizadores' => 'admin-users',
+    'Cópias de segurança' => 'admin-backup',
+    _ => switch (target) {
+      Area.creditFinancing => 'financing',
+      Area.financialAnalysis => 'financial-analysis',
+      Area.creditApproval => 'credit-approval',
+      Area.creditAuthorization => 'credit-authorization',
+      Area.creditDisbursement => 'credit-disbursement',
+      Area.creditStatus => 'credit-status',
+      Area.creditRestructuring => 'credit-restructuring',
+      _ => '',
     },
-  );
+  };
 }
 
 Future<void> showThemeModeMenu(

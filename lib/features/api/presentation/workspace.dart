@@ -11,6 +11,7 @@ import '../../../app/theme/app_theme.dart';
 import '../../../app/theme/design_tokens.dart';
 import '../../../app/theme/fluent_icons_compat.dart';
 import '../../../core/csv/csv_codec.dart';
+import '../../../core/localization/user_messages.dart';
 import '../domain/money.dart';
 import '../domain/repository.dart';
 import 'form.dart';
@@ -22,8 +23,6 @@ import 'credit_stages.dart';
 import 'portfolio_views.dart';
 import 'report_views.dart';
 import 'credit_products.dart';
-import 'finance_views.dart';
-import 'admin_views.dart';
 import 'plans_view.dart';
 import 'audit_logs_view.dart';
 import '../../settings/application/settings_controller.dart';
@@ -83,6 +82,8 @@ const _methods = {
   'mpesa': 'M-Pesa',
   'emola': 'e-Mola',
   'mkesh': 'mKesh',
+  'bim': 'Millennium BIM',
+  'bci': 'BCI',
 };
 const _labels = {
   'id': 'Referência',
@@ -463,6 +464,8 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         'Transferências',
         Icons.swap_horiz_outlined,
       ),
+      const _Section('branches', 'Agências', Icons.business_outlined),
+      const _Section('roles', 'Perfis', Icons.shield),
       const _Section(
         'organization-settings',
         'Organização',
@@ -488,8 +491,9 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   int offset = 0, generation = 0;
   List<Json> rows = [];
   Json metrics = {};
+  List<Json> notifications = [];
   List<PendingWrite> pending = [];
-  bool loading = true, busy = false, foreground = true;
+  bool loading = true, refreshing = false, busy = false, foreground = true;
   String? error;
   DateTime? updated;
   Timer? timer;
@@ -504,6 +508,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       scope:
           '${widget.session.profile?['organization_id'] ?? widget.session.profile?['id'] ?? 'demo'}',
       actor: '${widget.session.profile?['name'] ?? 'Gestor'}',
+      repository: api,
     );
     institutionSettings.load().then((_) {
       if (mounted && institutionSettings.error == null)
@@ -532,19 +537,29 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
 
   Future<void> load() async {
     final current = ++generation, target = route;
+    final initialLoad = rows.isEmpty && metrics.isEmpty && pending.isEmpty;
     setState(() {
-      loading = true;
+      loading = initialLoad;
+      refreshing = !initialLoad;
       error = null;
     });
     if (_creditStageRoutes.contains(target) ||
         target == 'settings' ||
         target == 'organization-settings') {
-      if (mounted && current == generation) setState(() => loading = false);
+      if (mounted && current == generation) {
+        setState(() {
+          loading = false;
+          refreshing = false;
+        });
+      }
       return;
     }
     try {
       await widget.session.verify();
       if (!mounted || current != generation) return;
+      final notificationsFuture = api
+          .get('/notifications?limit=3&offset=0')
+          .catchError((_) => <Json>[]);
       final value = target == 'pending'
           ? await api.pending()
           : await api.get(
@@ -556,8 +571,12 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                   ? '/organization-settings?limit=50&offset=$offset&q=${Uri.encodeQueryComponent(search.text.trim())}'
                   : '/$target?limit=50&offset=$offset&q=${Uri.encodeQueryComponent(search.text.trim())}',
             );
+      final notificationValue = await notificationsFuture;
       if (!mounted || current != generation) return;
       setState(() {
+        notifications = (notificationValue as List)
+            .map((row) => Map<String, dynamic>.from(row as Map))
+            .toList();
         if (target == 'pending') {
           pending = value as List<PendingWrite>;
         } else if (target == 'dashboard' ||
@@ -574,7 +593,12 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     } catch (e) {
       if (mounted && current == generation) setState(() => error = '$e');
     } finally {
-      if (mounted && current == generation) setState(() => loading = false);
+      if (mounted && current == generation) {
+        setState(() {
+          loading = false;
+          refreshing = false;
+        });
+      }
     }
   }
 
@@ -618,10 +642,10 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
           success: false,
         );
       }
-    } catch (_) {
+    } catch (failure) {
       if (mounted) {
         await _feedback(
-          'Não foi possível confirmar. Consulte Pendências antes de repetir.',
+          userMessage(failure),
           title: 'Operação não confirmada',
           success: false,
         );
@@ -635,30 +659,52 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   }
 
   Future<void> _closeAccountingPeriod() async {
-    final controller = TextEditingController();
+    var selectedMonth = DateTime(DateTime.now().year, DateTime.now().month);
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Encerrar período contabilístico'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(labelText: 'Mês (AAAA-MM)'),
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Encerrar período contabilístico'),
+          content: ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Período contabilístico'),
+            subtitle: Text(
+              '${selectedMonth.month.toString().padLeft(2, '0')}/${selectedMonth.year}',
+            ),
+            trailing: const Icon(Icons.calendar_today_outlined),
+            onTap: () async {
+              final picked = await showDatePicker(
+                context: dialogContext,
+                initialDate: selectedMonth,
+                firstDate: DateTime(2000),
+                lastDate: DateTime(DateTime.now().year + 10, 12, 31),
+                helpText: 'Seleccione o período contabilístico',
+                cancelText: 'Cancelar',
+                confirmText: 'Seleccionar',
+              );
+              if (picked != null) {
+                setDialogState(
+                  () => selectedMonth = DateTime(picked.year, picked.month),
+                );
+              }
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Encerrar'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Encerrar'),
-          ),
-        ],
       ),
     );
-    final month = controller.text.trim();
-    controller.dispose();
-    if (confirmed != true || month.isEmpty) return;
+    if (confirmed != true) return;
+    final month =
+        '${selectedMonth.year}-${selectedMonth.month.toString().padLeft(2, '0')}';
     await mutate('POST', '/accounting-periods/$month/close', {});
   }
 
@@ -800,6 +846,21 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
           initial: 'operator',
         ),
       ],
+      'branches' => const [
+        Field('code', 'Código'),
+        Field('name', 'Nome'),
+        Field('address', 'Endereço', optional: true),
+        Field('location', 'Localização', optional: true),
+      ],
+      'roles' => const [
+        Field('code', 'Código'),
+        Field('name', 'Nome'),
+        Field(
+          'permissions',
+          'Permissões separadas por vírgula',
+          optional: true,
+        ),
+      ],
       _ => <Field>[],
     };
     final data = await form(
@@ -815,10 +876,21 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       fields,
     );
     if (data != null && mounted) {
+      final payload = route == 'roles'
+          ? {
+              ...data,
+              'permissions': '${data['permissions'] ?? ''}'
+                  .split(',')
+                  .map((value) => value.trim().toUpperCase())
+                  .where((value) => value.isNotEmpty)
+                  .toSet()
+                  .toList(),
+            }
+          : data;
       await mutate(
         route == 'users' ? 'POST' : 'POST',
         route == 'users' ? '/organizations/members/invite' : '/$route',
-        data,
+        payload,
       );
     }
   }
@@ -876,12 +948,13 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         }
       }
       setState(() => busy = true);
+      final clients = <Json>[];
       for (final values in records.skip(1)) {
         final row = {
           for (var i = 0; i < header.length && i < values.length; i++)
             header[i]: values[i].trim(),
         };
-        await api.write('POST', '/clients', {
+        clients.add({
           'name': row['nome'] ?? '',
           'phone': row['telemovel'] ?? '',
           'document': row['documento'] ?? '',
@@ -890,9 +963,15 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
           'clientType': 'individual',
         });
       }
+      final result = Map<String, dynamic>.from(
+        await api.write('POST', '/clients/import', {'clients': clients}) as Map,
+      );
       if (mounted) {
         await _feedback(
-          'CSV importado no servidor.',
+          'Total: ${result['total'] ?? clients.length}\n'
+          'Importados: ${result['imported'] ?? 0}\n'
+          'Duplicados: ${result['duplicates'] ?? 0}\n'
+          'Inválidos/falhas: ${result['invalid'] ?? 0}',
           title: 'Importação concluída',
           success: true,
         );
@@ -1200,7 +1279,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
 
   Future<void> kyc(Json row) async {
     final body = await form(context, api, 'Rever identificação', const [
-      Field('expiresAt', 'Validade do documento (AAAA-MM-DD)', kind: 'date'),
+      Field('expiresAt', 'Validade do documento', kind: 'date'),
     ]);
     if (body != null && mounted) {
       await mutate('POST', '/clients/${row['id']}/kyc', body);
@@ -1490,6 +1569,8 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
             'sync-operations',
             'backup-archives',
             'retention-policies',
+            'branches',
+            'roles',
           ].contains(route));
 
   Widget _dashboardBody() {
@@ -2307,6 +2388,9 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   }
 
   Widget _body() {
+    if (loading && rows.isEmpty && !_creditStageRoutes.contains(route)) {
+      return _loadingState(_loadingMessageForRoute(route));
+    }
     if (route == 'risk-scores') {
       if (error != null) {
         return Column(
@@ -2392,26 +2476,36 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         route == 'loans' ||
         route == 'contracts' ||
         route == 'portfolio') {
-      return const PortfolioView();
+      return PortfolioView(repository: api);
     }
-    if (route == 'collections' || route == 'payments' || route == 'receipts') {
-      return const CollectionsView();
-    }
-    if (route == 'products') return const CreditProductsView();
-    if (route.startsWith('finance-'))
-      return FinanceView(
-        key: ValueKey(route),
-        area: _financeAreas[route] ?? 'Saldos',
-      );
+    if (route == 'collections') route = 'payments';
+    if (route == 'products') return CreditProductsView(repository: api);
+    route = switch (route) {
+      'finance-balances' => 'accounts',
+      'finance-income' || 'finance-expenses' => 'cash-entries',
+      'finance-disbursements' => 'loans',
+      'finance-refunds' => 'payments',
+      'finance-overdue' => 'loans',
+      'finance-assets' => 'accounts',
+      _ => route,
+    };
     if (route.startsWith('report-')) {
-      return ReportView(kind: _reportKinds[route] ?? 'Créditos');
+      return ReportView(
+        kind: _reportKinds[route] ?? 'Créditos',
+        repository: api,
+      );
     }
-    if (route.startsWith('admin-')) {
-      return AdminView(kind: route.substring(6), key: ValueKey(route));
-    }
-    if (route == 'plans') return const PlansView();
+    route = switch (route) {
+      'admin-accounting' => 'journal',
+      'admin-sync' => 'sync-operations',
+      'admin-aml' => 'aml-alerts',
+      'admin-users' => 'users',
+      'admin-backup' => 'backup-archives',
+      _ => route,
+    };
+    if (route == 'plans') return PlansView(repository: api);
     if (_creditStageRoutes.contains(route)) {
-      return CreditStagesView(stage: route);
+      return CreditStagesView(stage: route, repository: api);
     }
     if (route == 'settings' || route == 'organization-settings') {
       return InstitutionSettingsView(
@@ -2656,6 +2750,49 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     );
   }
 
+  Widget _loadingState(String message) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 48),
+    child: Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SyscrediProgressIndicator(size: 42),
+          const SizedBox(height: 16),
+          Text(message, textAlign: TextAlign.center),
+        ],
+      ),
+    ),
+  );
+
+  String _loadingMessageForRoute(String value) => switch (value) {
+    'clients' => 'A carregar clientes…',
+    'businesses' => 'A carregar empresas…',
+    'co-signers' => 'A carregar co-assinantes…',
+    'client-guarantors' => 'A carregar avalistas…',
+    'products' => 'A carregar produtos de crédito…',
+    'dashboard' => 'A carregar o painel…',
+    'payments' || 'collections' => 'A carregar pagamentos…',
+    'receipts' => 'A carregar recibos…',
+    'accounts' || 'finance-balances' => 'A carregar contas financeiras…',
+    'cash-entries' => 'A carregar movimentos de tesouraria…',
+    'journal' => 'A carregar lançamentos contabilísticos…',
+    'accounting-periods' => 'A carregar períodos contabilísticos…',
+    'reconciliations' => 'A carregar reconciliações…',
+    'account-transfers' => 'A carregar transferências…',
+    'aml-alerts' => 'A carregar alertas de compliance…',
+    'field-visits' => 'A carregar visitas de campo…',
+    'documents' => 'A carregar documentos…',
+    'risk-scores' => 'A carregar avaliações de risco…',
+    'audit' => 'A carregar eventos de auditoria…',
+    'reports' => 'A carregar relatórios…',
+    'pending' => 'A carregar operações pendentes…',
+    'notifications' => 'A carregar notificações…',
+    'branches' => 'A carregar agências…',
+    'roles' => 'A carregar perfis e permissões…',
+    'users' || 'admin-users' => 'A carregar utilizadores…',
+    _ => 'A carregar dados…',
+  };
+
   Widget _recordsTable() {
     final columns = <String>{};
     for (final row in rows) {
@@ -2834,101 +2971,9 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     }
   }
 
-  static final _mockIndividualClients = <Json>[
-    {
-      'id': 'mock-client-001',
-      'name': 'Edson Mário Morais',
-      'phone': '878 935 415',
-      'document': '110105200085-C',
-      'activity': 'Comércio a retalho',
-      'location': 'Maputo · KaMpfumo',
-      'gender': 'Masculino',
-      'status': 'Regular',
-      'kyc_expires_at': '2026-10-20',
-      'registration_date': '2026-09-09',
-      'city': 'Maputo',
-      'nationality': 'Moçambicana',
-      'birth_date': '1999-07-28',
-      'marital_status': 'Solteiro(a)',
-      'manager': 'Naveia Muaquiquia João',
-    },
-    {
-      'id': 'mock-client-002',
-      'name': 'Edilson Pereira Langa',
-      'phone': '855 336 109',
-      'document': '110108869332-P',
-      'activity': 'Agricultura',
-      'location': 'Maputo · Marracuene',
-      'status': 'Regular',
-      'kyc_expires_at': '2026-10-20',
-      'registration_date': '2026-09-09',
-    },
-    {
-      'id': 'mock-client-003',
-      'name': 'Mucuaro Fernando',
-      'phone': '870 000 335',
-      'document': '031707123481-F',
-      'activity': 'Serviços',
-      'location': 'Maputo · Matola',
-      'status': 'Regular',
-      'kyc_expires_at': '2026-11-02',
-      'registration_date': '2026-09-09',
-    },
-    {
-      'id': 'mock-client-004',
-      'name': 'Neves João Madeira',
-      'phone': '876 608 410',
-      'document': '110104093182-B',
-      'activity': 'Comércio',
-      'location': 'Maputo · KaMubukwana',
-      'status': 'Regular',
-      'kyc_expires_at': '2026-12-02',
-      'registration_date': '2026-09-07',
-    },
-    {
-      'id': 'mock-client-005',
-      'name': 'Wezimane João Alficha',
-      'phone': '878 935 415',
-      'document': '060102696230-B',
-      'activity': 'Produção',
-      'location': 'Matola',
-      'status': 'Regular',
-      'registration_date': '2026-09-07',
-    },
-  ];
-
-  static final _mockBusinesses = <Json>[
-    {
-      'id': 'mock-business-001',
-      'legal_name': 'Ac esa Microcrédito, E.I',
-      'trading_name': 'Acesa Microcrédito',
-      'tax_number': '400123456',
-      'phone': '823 456 789',
-      'active': true,
-      'city': 'Maputo',
-      'entity_type': 'Sociedade limitada',
-      'license_number': 'LIC-2026-0081',
-      'activity': 'Serviços financeiros',
-      'registration_date': '2026-09-09',
-    },
-  ];
-
-  static final _mockGuarantors = <Json>[
-    {
-      'id': 'mock-guarantor-001',
-      'name': 'Muaquiquia João',
-      'phone': '869 198 551',
-      'document': '040501882771J',
-      'gender': 'Masculino',
-      'relationship': 'Familiar',
-      'birth_date': '1988-04-12',
-      'registration_date': '2026-05-27',
-    },
-  ];
-
   Widget _clientsBody() {
     if (route != 'clients') return _relatedClientsBody();
-    final source = rows.isEmpty ? _mockIndividualClients : rows;
+    final source = rows;
     final visible = clientStatusFilter == 'Todos'
         ? source
         : source
@@ -3000,12 +3045,12 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
             EqualButtonGroup(
               children: [
                 OutlinedButton.icon(
-                  onPressed: busy || loading ? null : importClients,
+                  onPressed: busy ? null : importClients,
                   icon: const Icon(Icons.upload_file),
                   label: const Text('Importar CSV'),
                 ),
                 FilledButton.icon(
-                  onPressed: busy || loading ? null : create,
+                  onPressed: busy ? null : create,
                   icon: const Icon(Icons.person_add),
                   label: const Text('Novo cliente'),
                 ),
@@ -3143,9 +3188,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         : coSigner
         ? 'Co-assinantes'
         : 'Clientes';
-    final visible = rows.isEmpty
-        ? (company ? _mockBusinesses : _mockGuarantors)
-        : rows;
+    final visible = rows;
     final columns = company
         ? const [
             ('legal_name', 'DENOMINAÇÃO LEGAL'),
@@ -3216,7 +3259,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
             SizedBox(
               height: 48,
               child: FilledButton.icon(
-                onPressed: busy || loading ? null : create,
+                onPressed: busy ? null : create,
                 icon: Icon(
                   company ? Icons.business_outlined : Icons.person_add,
                 ),
@@ -3426,11 +3469,16 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     String resource = 'clients',
   }) async {
     final name = '${row['name'] ?? row['legal_name'] ?? 'este registo'}';
+    final client = resource == 'clients';
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Remover registo?'),
-        content: Text('Esta acção irá remover “$name”. Deseja continuar?'),
+        title: Text(client ? 'Arquivar cliente?' : 'Remover registo?'),
+        content: Text(
+          client
+              ? '“$name” deixará de aparecer entre os clientes activos. O histórico financeiro será preservado.'
+              : 'Esta acção irá remover “$name”. Deseja continuar?',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
@@ -3441,13 +3489,53 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
               backgroundColor: Theme.of(dialogContext).colorScheme.error,
             ),
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Remover'),
+            child: Text(client ? 'Arquivar' : 'Remover'),
           ),
         ],
       ),
     );
     if (confirmed == true && row['id'] != null && mounted) {
-      await mutate('DELETE', '/$resource/${row['id']}', {});
+      if (client) {
+        String? dateValue(Object? value) {
+          if (value == null) return null;
+          if (value is DateTime)
+            return value.toIso8601String().split('T').first;
+          final text = '$value';
+          return text.contains('T') ? text.split('T').first : text;
+        }
+
+        int? integerValue(Object? value) => value == null
+            ? null
+            : value is int
+            ? value
+            : int.tryParse('$value');
+
+        await mutate('PUT', '/clients/${row['id']}', {
+          'clientType': '${row['client_type'] ?? 'individual'}',
+          'name': '${row['name'] ?? ''}',
+          'phone': '${row['phone'] ?? ''}',
+          'document': '${row['document'] ?? ''}',
+          'activity': '${row['activity'] ?? ''}',
+          'location': '${row['location'] ?? ''}',
+          if (dateValue(row['birth_date']) case final value?)
+            'birthDate': value,
+          if (row['gender'] != null) 'gender': row['gender'],
+          if (row['marital_status'] != null)
+            'maritalStatus': row['marital_status'],
+          if (row['email'] != null) 'email': row['email'],
+          if (row['address'] != null) 'address': row['address'],
+          if (integerValue(row['monthly_income_cents']) case final value?)
+            'monthlyIncomeCents': value,
+          if (integerValue(row['monthly_expenses_cents']) case final value?)
+            'monthlyExpensesCents': value,
+          if (integerValue(row['dependents']) case final value?)
+            'dependents': value,
+          'archived': true,
+          'version': integerValue(row['version']) ?? 1,
+        });
+      } else {
+        await mutate('DELETE', '/$resource/${row['id']}', {});
+      }
     }
   }
 
@@ -3987,30 +4075,41 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     ),
   );
 
-  static const _mockNotifications = [
-    (
-      icon: FluentSystemIcons.warning,
-      title: 'Pagamento em atraso',
-      message: 'Existem prestações que precisam de acompanhamento.',
-      time: 'Há 12 min',
-    ),
-    (
-      icon: FluentSystemIcons.document,
-      title: 'Documentação pendente',
-      message: 'Um cliente aguarda revisão de identificação.',
-      time: 'Há 1 h',
-    ),
-    (
-      icon: FluentSystemIcons.check,
-      title: 'Operação confirmada',
-      message: 'O último desembolso foi processado com sucesso.',
-      time: 'Ontem',
-    ),
-  ];
+  IconData _notificationIcon(String category) => switch (category) {
+    'overdue' || 'compliance' => FluentSystemIcons.warning,
+    'document' || 'approval' => FluentSystemIcons.document,
+    _ => FluentSystemIcons.check,
+  };
+
+  String _notificationTime(Object? value) {
+    final created = DateTime.tryParse('$value')?.toLocal();
+    if (created == null) return '';
+    final elapsed = DateTime.now().difference(created);
+    if (elapsed.inMinutes < 1) return 'Agora';
+    if (elapsed.inHours < 1) return 'Há ${elapsed.inMinutes} min';
+    if (elapsed.inDays < 1) return 'Há ${elapsed.inHours} h';
+    if (elapsed.inDays == 1) return 'Ontem';
+    return 'Há ${elapsed.inDays} dias';
+  }
+
+  Future<void> _markNotificationsRead() async {
+    final unread = notifications
+        .where((row) => row['read_at'] == null)
+        .toList();
+    for (final row in unread) {
+      await api.write('PATCH', '/notifications/${row['id']}/read', {});
+    }
+    if (!mounted) return;
+    setState(() {
+      for (final row in notifications) {
+        row['read_at'] ??= DateTime.now().toUtc().toIso8601String();
+      }
+    });
+  }
 
   Widget _notificationMenu() {
     final scheme = Theme.of(context).colorScheme;
-    final badge = metrics['overdue_cents'] == null ? 0 : 6;
+    final badge = notifications.where((row) => row['read_at'] == null).length;
     return PopupMenuButton<String>(
       tooltip: 'Centro de notificações',
       offset: const Offset(0, 12),
@@ -4049,11 +4148,22 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       onSelected: (value) async {
         if (value == 'pending') select('pending');
         if (value == 'read') {
-          await _feedback(
-            'Notificações marcadas como lidas.',
-            title: 'Notificações actualizadas',
-            success: true,
-          );
+          try {
+            await _markNotificationsRead();
+            if (!mounted) return;
+            await _feedback(
+              'Notificações marcadas como lidas.',
+              title: 'Notificações actualizadas',
+              success: true,
+            );
+          } catch (error) {
+            if (!mounted) return;
+            await _feedback(
+              '$error',
+              title: 'Notificações não actualizadas',
+              success: false,
+            );
+          }
         }
       },
       itemBuilder: (_) => [
@@ -4080,25 +4190,29 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
           ),
         ),
         const PopupMenuDivider(),
-        for (final notification in _mockNotifications)
+        for (final notification in notifications)
           PopupMenuItem<String>(
             enabled: false,
             height: 72,
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(notification.icon, color: scheme.primary, size: 20),
+                Icon(
+                  _notificationIcon('${notification['category'] ?? ''}'),
+                  color: scheme.primary,
+                  size: 20,
+                ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        notification.title,
+                        '${notification['title'] ?? ''}',
                         style: const TextStyle(fontWeight: FontWeight.w700),
                       ),
                       Text(
-                        notification.message,
+                        '${notification['body'] ?? ''}',
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -4108,7 +4222,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                       ),
                       const SizedBox(height: 3),
                       Text(
-                        notification.time,
+                        _notificationTime(notification['created_at']),
                         style: TextStyle(color: scheme.primary, fontSize: 11),
                       ),
                     ],
@@ -4147,8 +4261,15 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
           : Drawer(
               child: SideBar(
                 area: _currentArea(),
-                onTap: _selectArea,
-                onSubmenu: _selectSubmodule,
+                activeRoute: route,
+                onTap: (area) {
+                  Navigator.of(context).pop();
+                  _selectArea(area);
+                },
+                onSubmenu: (label) {
+                  Navigator.of(context).pop();
+                  _selectSubmodule(label);
+                },
               ),
             ),
       body: Stack(
@@ -4159,6 +4280,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
               if (wide)
                 SideBar(
                   area: _currentArea(),
+                  activeRoute: route,
                   onTap: _selectArea,
                   onSubmenu: _selectSubmodule,
                 ),
@@ -4535,7 +4657,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                         ),
                       ],
                     ),
-                    if (loading || busy) const LinearProgressIndicator(),
+                    if (refreshing || busy) const LinearProgressIndicator(),
                     Expanded(
                       child: SingleChildScrollView(
                         padding: const EdgeInsets.all(20),

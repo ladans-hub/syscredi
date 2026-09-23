@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../../api/domain/repository.dart';
 import '../domain/settings_schema.dart';
 
 SettingsData copySettings(SettingsData value) =>
@@ -10,8 +11,13 @@ SettingsData copySettings(SettingsData value) =>
 /// changed here. Audit entries are append-only through this interface; a local
 /// mock store cannot offer the tamper resistance of a server audit service.
 class InstitutionSettingsController extends ChangeNotifier {
-  InstitutionSettingsController({required this.scope, required this.actor});
+  InstitutionSettingsController({
+    required this.scope,
+    required this.actor,
+    this.repository,
+  });
   final String scope, actor;
+  final Repository? repository;
   SettingsData saved = defaultSettings();
   SettingsData draft = defaultSettings();
   List<SettingsData> _audit = [];
@@ -35,13 +41,25 @@ class InstitutionSettingsController extends ChangeNotifier {
   Future<void> load() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final raw = prefs.getString(_key);
-      if (raw != null) {
-        final envelope = jsonDecode(raw) as Map;
-        saved = validateImport(envelope);
-        _audit = (envelope['audit'] as List? ?? [])
-            .map((e) => Map<String, dynamic>.from(e as Map))
-            .toList();
+      if (repository == null) {
+        final raw = prefs.getString(_key);
+        if (raw != null) {
+          final envelope = jsonDecode(raw) as Map;
+          saved = validateImport(envelope);
+          _audit = (envelope['audit'] as List? ?? [])
+              .map((e) => Map<String, dynamic>.from(e as Map))
+              .toList();
+        }
+      } else {
+        final rows = await repository!.get(
+          '/organization-settings?limit=100&offset=0',
+        );
+        final remote = <String, dynamic>{};
+        for (final row in rows as List) {
+          final item = Map<String, dynamic>.from(row as Map);
+          remote['${item['key']}'] = item['value'];
+        }
+        saved = {...defaultSettings(), ...remote};
       }
       draft = copySettings(saved);
       final last = prefs.getString('$_key.category');
@@ -157,16 +175,25 @@ class InstitutionSettingsController extends ChangeNotifier {
       'changes': changes,
     };
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final success = await prefs.setString(
-        _key,
-        jsonEncode({
-          'version': 1,
-          'settings': next,
-          'audit': [..._audit, entry],
-        }),
-      );
-      if (!success) throw StateError('Storage write failed');
+      if (repository == null) {
+        final prefs = await SharedPreferences.getInstance();
+        final success = await prefs.setString(
+          _key,
+          jsonEncode({
+            'version': 1,
+            'settings': next,
+            'audit': [..._audit, entry],
+          }),
+        );
+        if (!success) throw StateError('Storage write failed');
+      } else {
+        await repository!.write('POST', '/organization-settings/batch', {
+          'settings': [
+            for (final key in changedKeys) {'key': key, 'value': next[key]},
+          ],
+          'reason': reason,
+        });
+      }
       saved = next;
       draft = copySettings(next);
       _audit = [..._audit, entry];
@@ -212,7 +239,7 @@ class InstitutionSettingsController extends ChangeNotifier {
 
   String exportJson() => const JsonEncoder.withIndent(
     '  ',
-  ).convert({'version': 1, 'mode': 'demonstration', 'settings': saved});
+  ).convert({'version': 1, 'mode': 'configuration', 'settings': saved});
 
   void importJson(String raw) {
     if (raw.length > 16000000) {

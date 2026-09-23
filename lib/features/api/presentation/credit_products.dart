@@ -1,10 +1,13 @@
 import '../../../core/widgets/premium_dialog.dart';
 import 'package:flutter/material.dart' hide Icons;
 import '../../../app/theme/fluent_icons_compat.dart';
+import '../../../app/theme/app_theme.dart';
 import '../../../core/widgets/operation_feedback.dart';
+import '../domain/repository.dart';
 
 class CreditProductsView extends StatefulWidget {
-  const CreditProductsView({super.key});
+  const CreditProductsView({required this.repository, super.key});
+  final Repository repository;
   @override
   State<CreditProductsView> createState() => _CreditProductsState();
 }
@@ -12,72 +15,66 @@ class CreditProductsView extends StatefulWidget {
 class _CreditProductsState extends State<CreditProductsView> {
   String query = '';
   String status = 'Todos';
-  final products = <_Product>[
-    _Product(
-      'Microcrédito Flex',
-      'MC-FLX-01',
-      'Pessoal',
-      'Activo',
-      'MZN',
-      1000,
-      50000,
-      '30% anual',
-      'Mensal',
-      '1–12 meses',
-      'Mensal',
-    ),
-    _Product(
-      'Capital de Giro',
-      'EMP-GIRO-02',
-      'Empresarial',
-      'Activo',
-      'MZN',
-      10000,
-      250000,
-      '28% anual',
-      'Mensal',
-      '3–24 meses',
-      'Mensal',
-    ),
-    _Product(
-      'Crédito Emergência',
-      'EMG-001',
-      'Emergência',
-      'Rascunho',
-      'MZN',
-      500,
-      15000,
-      '2,5% mensal',
-      'Mensal',
-      '1–6 meses',
-      'Quinzenal',
-    ),
-    _Product(
-      'Crédito Grupo Solidário',
-      'GRP-009',
-      'Grupo',
-      'Inactivo',
-      'MZN',
-      5000,
-      100000,
-      '24% anual',
-      'Mensal',
-      '6–18 meses',
-      'Mensal',
-    ),
-  ];
+  final products = <_Product>[];
+  bool loading = true;
+  bool refreshing = false;
+  String? error;
+  bool ascending = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final initialLoad = products.isEmpty;
+    setState(() {
+      loading = initialLoad;
+      refreshing = !initialLoad;
+      error = null;
+    });
+    try {
+      final data = await widget.repository.get('/products?limit=100&offset=0');
+      if (!mounted) return;
+      setState(() {
+        products
+          ..clear()
+          ..addAll(
+            (data as List).map(
+              (row) => _Product.fromJson(Map<String, dynamic>.from(row as Map)),
+            ),
+          );
+      });
+    } catch (failure) {
+      if (mounted) setState(() => error = '$failure');
+    } finally {
+      if (mounted) {
+        setState(() {
+          loading = false;
+          refreshing = false;
+        });
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final visible = products
-        .where(
-          (p) =>
-              (status == 'Todos' || p.status == status) &&
-              ('${p.name} ${p.code} ${p.type}'.toLowerCase().contains(
-                query.toLowerCase(),
-              )),
-        )
-        .toList();
+    final visible =
+        products
+            .where(
+              (p) =>
+                  (status == 'Todos' || p.status == status) &&
+                  ('${p.name} ${p.code} ${p.type}'.toLowerCase().contains(
+                    query.toLowerCase(),
+                  )),
+            )
+            .toList()
+          ..sort(
+            (left, right) => ascending
+                ? left.name.compareTo(right.name)
+                : right.name.compareTo(left.name),
+          );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -140,100 +137,124 @@ class _CreditProductsState extends State<CreditProductsView> {
               ),
             ),
             OutlinedButton.icon(
-              onPressed: () {},
+              onPressed: () => setState(() {
+                query = '';
+                status = 'Todos';
+              }),
               icon: const Icon(Icons.filter_alt_outlined),
               label: const Text('Filtros'),
             ),
             OutlinedButton.icon(
-              onPressed: () {},
+              onPressed: () => setState(() => ascending = !ascending),
               icon: const Icon(Icons.sync),
               label: const Text('Ordenar'),
             ),
           ],
         ),
         const SizedBox(height: 16),
-        Card(
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: DataTable(
-              columns: const [
-                DataColumn(label: Text('PRODUTO')),
-                DataColumn(label: Text('TIPO')),
-                DataColumn(label: Text('ESTADO')),
-                DataColumn(label: Text('LIMITES')),
-                DataColumn(label: Text('JUROS')),
-                DataColumn(label: Text('PRAZO')),
-                DataColumn(label: Text('PAGAMENTO')),
-                DataColumn(label: Text('ACÇÕES')),
-              ],
-              rows: [
-                for (final p in visible)
-                  DataRow(
-                    cells: [
-                      DataCell(
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text(
-                              p.name,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            Text(
-                              p.code,
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                          ],
-                        ),
-                      ),
-                      DataCell(Text(p.type)),
-                      DataCell(_badge(p.status)),
-                      DataCell(
-                        Text(
-                          '${p.min.toStringAsFixed(0)}–${p.max.toStringAsFixed(0)} ${p.currency}',
-                        ),
-                      ),
-                      DataCell(Text(p.rate)),
-                      DataCell(Text(p.term)),
-                      DataCell(Text(p.frequency)),
-                      DataCell(
-                        Row(
-                          children: [
-                            IconButton(
-                              tooltip: 'Ver produto',
-                              onPressed: () => _details(context, p),
-                              icon: const Icon(Icons.visibility_outlined),
-                            ),
-                            IconButton(
-                              tooltip: 'Editar',
-                              onPressed: () => _form(context, product: p),
-                              icon: const Icon(Icons.edit),
-                            ),
-                            IconButton(
-                              tooltip: 'Simular',
-                              onPressed: () => _simulate(context, p),
-                              icon: const Icon(Icons.calculate_outlined),
-                            ),
-                            IconButton(
-                              tooltip: 'Activar/desactivar',
-                              onPressed: () => setState(
-                                () => p.status = p.status == 'Activo'
-                                    ? 'Inactivo'
-                                    : 'Activo',
-                              ),
-                              icon: const Icon(Icons.sync),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-              ],
+        if (refreshing) const LinearProgressIndicator(),
+        if (error != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: OutlinedButton.icon(
+              onPressed: _load,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Tentar novamente'),
             ),
           ),
-        ),
+        if (loading && products.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 40),
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SyscrediProgressIndicator(size: 42),
+                  SizedBox(height: 16),
+                  Text('A carregar produtos de crédito…'),
+                ],
+              ),
+            ),
+          )
+        else
+          Card(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: DataTable(
+                columns: const [
+                  DataColumn(label: Text('PRODUTO')),
+                  DataColumn(label: Text('TIPO')),
+                  DataColumn(label: Text('ESTADO')),
+                  DataColumn(label: Text('LIMITES')),
+                  DataColumn(label: Text('JUROS')),
+                  DataColumn(label: Text('PRAZO')),
+                  DataColumn(label: Text('PAGAMENTO')),
+                  DataColumn(label: Text('ACÇÕES')),
+                ],
+                rows: [
+                  for (final p in visible)
+                    DataRow(
+                      cells: [
+                        DataCell(
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                p.name,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              Text(
+                                p.code,
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            ],
+                          ),
+                        ),
+                        DataCell(Text(p.type)),
+                        DataCell(_badge(p.status)),
+                        DataCell(
+                          Text(
+                            '${p.min.toStringAsFixed(0)}–${p.max.toStringAsFixed(0)} ${p.currency}',
+                          ),
+                        ),
+                        DataCell(Text(p.rate)),
+                        DataCell(Text(p.term)),
+                        DataCell(Text(p.frequency)),
+                        DataCell(
+                          Row(
+                            children: [
+                              IconButton(
+                                tooltip: 'Ver produto',
+                                onPressed: () => _details(context, p),
+                                icon: const Icon(Icons.visibility_outlined),
+                              ),
+                              IconButton(
+                                tooltip: 'Editar',
+                                onPressed: () => _form(context, product: p),
+                                icon: const Icon(Icons.edit),
+                              ),
+                              IconButton(
+                                tooltip: 'Simular',
+                                onPressed: () => _simulate(context, p),
+                                icon: const Icon(Icons.calculate_outlined),
+                              ),
+                              IconButton(
+                                tooltip: 'Activar/desactivar',
+                                onPressed: () => _toggle(p),
+                                icon: const Icon(Icons.sync),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                ],
+              ),
+            ),
+          ),
       ],
     );
   }
@@ -261,9 +282,16 @@ class _CreditProductsState extends State<CreditProductsView> {
     final form = GlobalKey<FormState>();
     final name = TextEditingController(text: product?.name);
     final code = TextEditingController(text: product?.code);
+    final description = TextEditingController(text: product?.description);
     final min = TextEditingController(text: product?.min.toStringAsFixed(0));
     final max = TextEditingController(text: product?.max.toStringAsFixed(0));
-    await showDialog<void>(
+    var type = product?.type ?? 'Pessoal';
+    var method = product?.method ?? 'Saldo decrescente';
+    var period = product?.period ?? 'Anual';
+    var minTerm = '${product?.minMonths ?? 1} mês';
+    var maxTerm = '${product?.maxMonths ?? 12} meses';
+    var frequency = product?.frequency ?? 'Mensal';
+    final saved = await showDialog<bool>(
       context: context,
       builder: (dialog) => AlertDialog(
         insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
@@ -287,45 +315,59 @@ class _CreditProductsState extends State<CreditProductsView> {
                     _field(name, 'Nome do produto'),
                     _field(code, 'Código único'),
                   ]),
-                  _field(
-                    TextEditingController(),
-                    'Descrição comercial',
-                    lines: 2,
-                  ),
+                  _field(description, 'Descrição comercial', lines: 2),
                   _section('Limites e juros'),
                   _fields([
                     _field(min, 'Montante mínimo'),
                     _field(max, 'Montante máximo'),
-                    _select('Tipo de crédito', [
-                      'Pessoal',
-                      'Consumo',
-                      'Empresarial',
-                      'Emergência',
-                      'Salário',
-                      'Grupo',
-                    ]),
+                    _select(
+                      'Tipo de crédito',
+                      [
+                        'Pessoal',
+                        'Consumo',
+                        'Empresarial',
+                        'Emergência',
+                        'Salário',
+                        'Grupo',
+                      ],
+                      initial: type,
+                      onChanged: (value) => type = value,
+                    ),
                   ]),
                   _fields([
-                    _select('Método de cálculo', [
-                      'Juro flat',
-                      'Saldo decrescente',
-                      'Anuidade',
-                    ]),
-                    _select('Periodicidade da taxa', [
-                      'Mensal',
-                      'Trimestral',
-                      'Anual',
-                    ]),
+                    _select(
+                      'Método de cálculo',
+                      ['Juro flat', 'Saldo decrescente', 'Anuidade'],
+                      initial: method,
+                      onChanged: (value) => method = value,
+                    ),
+                    _select(
+                      'Periodicidade da taxa',
+                      ['Mensal', 'Trimestral', 'Anual'],
+                      initial: period,
+                      onChanged: (value) => period = value,
+                    ),
                   ]),
                   _section('Prazo e prestações'),
                   _fields([
-                    _select('Prazo mínimo', ['1 mês', '3 meses', '6 meses']),
-                    _select('Prazo máximo', [
-                      '6 meses',
-                      '12 meses',
-                      '24 meses',
-                    ]),
-                    _select('Frequência', ['Semanal', 'Quinzenal', 'Mensal']),
+                    _select(
+                      'Prazo mínimo',
+                      ['1 mês', '3 meses', '6 meses'],
+                      initial: minTerm,
+                      onChanged: (value) => minTerm = value,
+                    ),
+                    _select(
+                      'Prazo máximo',
+                      ['6 meses', '12 meses', '24 meses'],
+                      initial: maxTerm,
+                      onChanged: (value) => maxTerm = value,
+                    ),
+                    _select(
+                      'Frequência',
+                      ['Semanal', 'Quinzenal', 'Mensal'],
+                      initial: frequency,
+                      onChanged: (value) => frequency = value,
+                    ),
                   ]),
                   _fields([
                     _select('Carência', ['Sem carência', '15 dias', '30 dias']),
@@ -370,8 +412,7 @@ class _CreditProductsState extends State<CreditProductsView> {
           FilledButton(
             onPressed: () {
               if (form.currentState!.validate()) {
-                Navigator.pop(dialog);
-                _toast(context, 'Produto guardado.');
+                Navigator.pop(dialog, true);
               }
             },
             child: const Text('Guardar produto'),
@@ -379,6 +420,44 @@ class _CreditProductsState extends State<CreditProductsView> {
         ],
       ),
     );
+    if (saved != true || !mounted) return;
+    final minAmount = (num.tryParse(min.text.trim()) ?? 0) * 100;
+    final maxAmount = (num.tryParse(max.text.trim()) ?? 0) * 100;
+    final payload = <String, dynamic>{
+      'name': name.text.trim(),
+      'code': code.text.trim(),
+      'description': description.text.trim(),
+      'annualRateBps': product?.annualRateBps ?? 3000,
+      'minAmountCents': minAmount.round(),
+      'maxAmountCents': maxAmount.round(),
+      'minMonths': _months(minTerm),
+      'maxMonths': _months(maxTerm),
+      'currency': product?.currency ?? 'MZN',
+      'productType': _typeValue(type),
+      'ratePeriod': period == 'Mensal' ? 'monthly' : 'annual',
+      'interestMethod': method == 'Juro flat' ? 'flat' : 'declining_balance',
+      'paymentFrequency': _frequencyValue(frequency),
+      'status': product?.statusValue ?? 'active',
+      'fees': product?.fees ?? <dynamic>[],
+      'penalties': product?.penalties ?? <dynamic>[],
+      'gracePeriodDays': product?.gracePeriodDays ?? 0,
+      'eligibilityRules': product?.eligibilityRules ?? <String, dynamic>{},
+    };
+    if (product != null) {
+      payload['version'] = product.version;
+      payload['active'] = product.statusValue == 'active';
+    }
+    try {
+      await widget.repository.write(
+        product == null ? 'POST' : 'PATCH',
+        product == null ? '/products' : '/products/${product.id}',
+        payload,
+      );
+      await _load();
+      if (mounted && context.mounted) _toast(context, 'Produto guardado.');
+    } catch (failure) {
+      if (mounted && context.mounted) _toast(context, '$failure');
+    }
   }
 
   Widget _section(String title) => Container(
@@ -415,10 +494,15 @@ class _CreditProductsState extends State<CreditProductsView> {
           decoration: InputDecoration(labelText: label),
         ),
       );
-  Widget _select(String label, List<String> values) => SizedBox(
+  Widget _select(
+    String label,
+    List<String> values, {
+    String? initial,
+    ValueChanged<String>? onChanged,
+  }) => SizedBox(
     width: 260,
     child: DropdownButtonFormField<String>(
-      initialValue: values.first,
+      initialValue: values.contains(initial) ? initial : values.first,
       decoration: InputDecoration(labelText: label),
       items: [
         for (final v in values)
@@ -427,7 +511,9 @@ class _CreditProductsState extends State<CreditProductsView> {
             child: Text(v, overflow: TextOverflow.ellipsis),
           ),
       ],
-      onChanged: (_) {},
+      onChanged: (value) {
+        if (value != null) onChanged?.call(value);
+      },
     ),
   );
   void _details(BuildContext c, _Product p) => showDialog<void>(
@@ -483,23 +569,103 @@ class _CreditProductsState extends State<CreditProductsView> {
     ),
   );
   void _toast(BuildContext c, String m) => showFeedbackDialog(c, message: m);
+
+  Future<void> _toggle(_Product product) async {
+    final next = product.statusValue == 'active' ? 'inactive' : 'active';
+    try {
+      await widget.repository.write('PATCH', '/products/${product.id}', {
+        ...product.payload,
+        'version': product.version,
+        'status': next,
+        'active': next == 'active',
+      });
+      await _load();
+    } catch (failure) {
+      if (mounted) _toast(context, '$failure');
+    }
+  }
+
+  int _months(String value) => int.tryParse(value.split(' ').first) ?? 1;
+  String _typeValue(String value) => switch (value) {
+    'Empresarial' => 'business',
+    'Consumo' => 'consumer',
+    'Emergência' => 'emergency',
+    'Grupo' => 'group',
+    _ => 'individual',
+  };
+  String _frequencyValue(String value) => switch (value) {
+    'Semanal' => 'weekly',
+    'Quinzenal' => 'biweekly',
+    'Trimestral' => 'quarterly',
+    _ => 'monthly',
+  };
 }
 
 class _Product {
-  _Product(
-    this.name,
-    this.code,
-    this.type,
-    this.status,
-    this.currency,
-    this.min,
-    this.max,
-    this.rate,
-    this.period,
-    this.term,
-    this.frequency,
+  _Product.fromJson(this.raw);
+  final Map<String, dynamic> raw;
+  String get id => '${raw['id']}';
+  String get name => '${raw['name'] ?? ''}';
+  String get code => '${raw['code'] ?? ''}';
+  String get description => '${raw['description'] ?? ''}';
+  String get currency => '${raw['currency'] ?? 'MZN'}';
+  int get annualRateBps => int.tryParse('${raw['annual_rate_bps']}') ?? 0;
+  int get version => int.tryParse('${raw['version']}') ?? 1;
+  int get minMonths => int.tryParse('${raw['min_months']}') ?? 1;
+  int get maxMonths => int.tryParse('${raw['max_months']}') ?? 1;
+  int get gracePeriodDays => int.tryParse('${raw['grace_period_days']}') ?? 0;
+  double get min => (num.tryParse('${raw['min_amount_cents']}') ?? 0) / 100;
+  double get max => (num.tryParse('${raw['max_amount_cents']}') ?? 0) / 100;
+  String get statusValue =>
+      '${raw['status'] ?? (raw['active'] == true ? 'active' : 'inactive')}';
+  String get status => switch (statusValue) {
+    'draft' => 'Rascunho',
+    'inactive' => 'Inactivo',
+    _ => 'Activo',
+  };
+  String get type => switch ('${raw['product_type'] ?? 'individual'}') {
+    'business' => 'Empresarial',
+    'consumer' => 'Consumo',
+    'emergency' => 'Emergência',
+    'group' || 'solidarity' => 'Grupo',
+    _ => 'Pessoal',
+  };
+  String get rate =>
+      '${(annualRateBps / 100).toStringAsFixed(2)}% ${period.toLowerCase()}';
+  String get period => raw['rate_period'] == 'monthly' ? 'Mensal' : 'Anual';
+  String get method =>
+      raw['interest_method'] == 'flat' ? 'Juro flat' : 'Saldo decrescente';
+  String get term => '$minMonths–$maxMonths meses';
+  String get frequency => switch ('${raw['payment_frequency'] ?? 'monthly'}') {
+    'weekly' => 'Semanal',
+    'biweekly' => 'Quinzenal',
+    'quarterly' => 'Trimestral',
+    _ => 'Mensal',
+  };
+  List<dynamic> get fees =>
+      List<dynamic>.from(raw['fees'] as List? ?? const []);
+  List<dynamic> get penalties =>
+      List<dynamic>.from(raw['penalties'] as List? ?? const []);
+  Map<String, dynamic> get eligibilityRules => Map<String, dynamic>.from(
+    raw['eligibility_rules'] as Map? ?? const <String, dynamic>{},
   );
-  final String name, code, type, currency, rate, period, term, frequency;
-  String status;
-  final double min, max;
+  Map<String, dynamic> get payload => {
+    'name': name,
+    'code': code,
+    'description': description,
+    'annualRateBps': annualRateBps,
+    'minAmountCents': (min * 100).round(),
+    'maxAmountCents': (max * 100).round(),
+    'minMonths': minMonths,
+    'maxMonths': maxMonths,
+    'currency': currency,
+    'productType': '${raw['product_type'] ?? 'individual'}',
+    'ratePeriod': '${raw['rate_period'] ?? 'annual'}',
+    'interestMethod': '${raw['interest_method'] ?? 'declining_balance'}',
+    'paymentFrequency': '${raw['payment_frequency'] ?? 'monthly'}',
+    'fees': fees,
+    'penalties': penalties,
+    'gracePeriodDays': gracePeriodDays,
+    'eligibilityRules': eligibilityRules,
+  };
 }

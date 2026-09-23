@@ -42,7 +42,8 @@ class ReliableRepository implements Repository {
   Future<dynamic> get(String path) async {
     final cacheKey = _cacheKey(path);
     try {
-      final result = await transport.request('GET', path);
+      final raw = await transport.request('GET', path);
+      final result = raw is Map && raw['data'] is List ? raw['data'] : raw;
       // The API is authoritative. Cache only confirmed responses for
       // rendering; writes always invalidate the affected resource cache.
       await store.write(cacheKey, jsonEncode(result));
@@ -100,7 +101,25 @@ class ReliableRepository implements Repository {
     }
     _writing = true;
     try {
-      final rows = await pending();
+      var rows = await pending();
+      if (rows.isNotEmpty) {
+        try {
+          final outcome = await get('/operations/${rows.first.key}') as Map;
+          if ([
+            'confirmed',
+            'cancelled',
+            'failed',
+          ].contains(outcome['status'])) {
+            await _save(actor, []);
+            rows = [];
+          }
+        } on ApiFailure catch (error) {
+          if (!error.uncertain && error.status != 401) {
+            await _save(actor, []);
+            rows = [];
+          }
+        }
+      }
       // Do not allow a second intention to hide an uncertain first payment.
       if (rows.isNotEmpty) {
         throw const ApiFailure(
@@ -208,8 +227,10 @@ class ReliableRepository implements Repository {
       if (parts.length > 2 && parts[1].isNotEmpty) {}
       return result;
     } on ApiFailure catch (error) {
-      // Auth errors keep the intent, to allow recovery under the same identity.
-      if (!error.uncertain && ![401, 403].contains(error.status)) {
+      // Keep a 401 intention because the identity may have changed while the
+      // request was in flight. Other definitive failures were rejected before
+      // execution and must not block every subsequent operation.
+      if (!error.uncertain && error.status != 401) {
         await _save(operation.userId, []);
       }
       rethrow;

@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 import '../domain/repository.dart';
 import '../application/reliable_repository.dart';
+import '../../../core/localization/user_messages.dart';
 
 class ApiClient extends ReliableRepository {
   ApiClient({
@@ -137,11 +138,7 @@ class HttpTransport implements Transport {
       if (response.statusCode < 200 || response.statusCode >= 300) {
         final message = data is Map ? data['message'] : null;
         throw ApiFailure(
-          message is List
-              ? message.join('\n')
-              : message is String
-              ? message
-              : 'Não foi possível concluir o pedido (${response.statusCode}).',
+          userMessage(message, status: response.statusCode),
           status: response.statusCode,
         );
       }
@@ -188,7 +185,10 @@ class HttpTransport implements Transport {
         final message = data is Map && data['message'] is String
             ? data['message'] as String
             : 'Não foi possível criar o acesso (${response.statusCode}).';
-        throw ApiFailure(message, status: response.statusCode);
+        throw ApiFailure(
+          userMessage(message, status: response.statusCode),
+          status: response.statusCode,
+        );
       }
       if (data is! Map)
         throw const ApiFailure('Resposta inválida do onboarding.');

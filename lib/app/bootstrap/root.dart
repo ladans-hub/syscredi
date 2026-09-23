@@ -66,6 +66,7 @@ class _RootState extends State<Root> {
                 login: session.login,
                 recoverPassword: session.recoverPassword,
                 register: session.register,
+                onGuest: session.enterGuest,
                 onAuthenticated: (_) {},
               )
             : Workspace(

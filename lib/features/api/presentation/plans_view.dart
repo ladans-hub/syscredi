@@ -6,9 +6,11 @@ import 'package:uuid/uuid.dart';
 import '../../../app/theme/fluent_icons_compat.dart';
 import '../../../app/theme/fluent_design.dart';
 import '../../../core/widgets/operation_feedback.dart';
+import '../domain/repository.dart';
 
 class PlansView extends StatefulWidget {
-  const PlansView({super.key});
+  const PlansView({required this.repository, super.key});
+  final Repository repository;
 
   @override
   State<PlansView> createState() => _PlansViewState();
@@ -51,6 +53,20 @@ class _PlansViewState extends State<PlansView> {
   void initState() {
     super.initState();
     _loadDeviceId();
+    _loadSubscription();
+  }
+
+  Future<void> _loadSubscription() async {
+    try {
+      final data = Map<String, dynamic>.from(
+        await widget.repository.get('/subscription/status') as Map,
+      );
+      if (!mounted || data['active'] != true) return;
+      setState(() {
+        _current = '${data['plan'] ?? 'Activo'}';
+        _trialDays = 0;
+      });
+    } catch (_) {}
   }
 
   @override
@@ -78,15 +94,36 @@ class _PlansViewState extends State<PlansView> {
       return;
     }
     setState(() => _activating = true);
-    await Future<void>.delayed(const Duration(milliseconds: 350));
-    if (!mounted) return;
-    setState(() => _activating = false);
-    await showFeedbackDialog(
-      context,
-      title: 'Código recebido',
-      message: 'A validação será concluída pelo servidor.',
-      success: true,
-    );
+    try {
+      await widget.repository.write('POST', '/subscription-history', {
+        'plan': _selected ?? _current,
+        'codeFingerprint': code,
+        'expiresAt': DateTime.now()
+            .add(const Duration(days: 365))
+            .toUtc()
+            .toIso8601String(),
+      });
+      await _loadSubscription();
+      if (mounted) {
+        await showFeedbackDialog(
+          context,
+          title: 'Código activado',
+          message: 'A activação foi confirmada pelo servidor.',
+          success: true,
+        );
+      }
+    } catch (failure) {
+      if (mounted) {
+        await showFeedbackDialog(
+          context,
+          title: 'Activação não concluída',
+          message: '$failure',
+          success: false,
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _activating = false);
+    }
   }
 
   Future<void> _choose(_Plan plan) async {
@@ -111,15 +148,11 @@ class _PlansViewState extends State<PlansView> {
       ),
     );
     if (ok == true && mounted) {
-      setState(() {
-        _current = plan.name;
-        _trialDays = 0;
-      });
+      setState(() => _selected = plan.name);
       await showFeedbackDialog(
         context,
-        title: 'Plano activado',
-        message: 'Plano ${plan.name} activado com sucesso.',
-        success: true,
+        title: 'Código necessário',
+        message: 'Insira o código de activação para confirmar ${plan.name}.',
       );
     }
   }

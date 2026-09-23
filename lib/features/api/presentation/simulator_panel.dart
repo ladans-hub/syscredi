@@ -20,8 +20,11 @@ class _SimulatorPanelState extends State<SimulatorPanel> {
   final client = TextEditingController();
   final phone = TextEditingController();
   DateTime start = DateTime.now();
+  String creditType = 'Parcelado';
   String frequency = 'Mensal';
   String interestType = 'Amortização francesa';
+
+  bool get isMonthlyCredit => creditType == 'Crédito mensal';
 
   @override
   void dispose() {
@@ -44,6 +47,32 @@ class _SimulatorPanelState extends State<SimulatorPanel> {
 
   _Simulation get simulation {
     final amount = number(principal).clamp(0, double.infinity).toDouble();
+    if (isMonthlyCredit) {
+      final days = number(term).round().clamp(1, 30);
+      final rate = days <= 14 ? 20.0 : 30.0;
+      final interest = amount * rate / 100;
+      final fee = amount * number(originationFee).clamp(0, 100) / 100;
+      final insuranceValue = amount * number(insurance).clamp(0, 100) / 100;
+      final total = amount + interest + fee + insuranceValue;
+      return _Simulation(
+        amount: amount,
+        periods: 1,
+        payment: total,
+        interest: interest,
+        fees: fee + insuranceValue,
+        total: total,
+        rows: [
+          _Installment(
+            1,
+            start.add(Duration(days: days)),
+            total,
+            amount,
+            interest,
+            0,
+          ),
+        ],
+      );
+    }
     final months = number(term).round().clamp(1, 120);
     final annual = number(annualRate).clamp(0, 1000).toDouble();
     final feeRate = number(originationFee).clamp(0, 100).toDouble();
@@ -121,6 +150,9 @@ class _SimulatorPanelState extends State<SimulatorPanel> {
     insurance.text = '0';
     client.clear();
     phone.clear();
+    creditType = 'Parcelado';
+    frequency = 'Mensal';
+    interestType = 'Amortização francesa';
     setState(() {});
   }
 
@@ -221,9 +253,67 @@ class _SimulatorPanelState extends State<SimulatorPanel> {
               crossAxisSpacing: FluentTokens.space8,
               childAspectRatio: columns == 3 ? 3.6 : 3.35,
               children: [
+                SizedBox(
+                  height: 52,
+                  child: DropdownButtonFormField<String>(
+                    initialValue: creditType,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Tipo de crédito',
+                      isDense: true,
+                      constraints: BoxConstraints.tightFor(height: 52),
+                    ),
+                    items: ['Parcelado', 'Crédito mensal']
+                        .map(
+                          (value) => DropdownMenuItem(
+                            value: value,
+                            child: Text(value, overflow: TextOverflow.ellipsis),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setState(() {
+                        creditType = value;
+                        if (isMonthlyCredit) {
+                          term.text = '30';
+                          annualRate.text = '30';
+                          frequency = 'Mensal';
+                          interestType = 'Juros simples';
+                        } else {
+                          term.text = '12';
+                          annualRate.text = '30';
+                        }
+                      });
+                    },
+                  ),
+                ),
                 _moneyField('Capital', principal, 'Montante em MT'),
-                _numberField('Prazo', term, 'meses', min: 1, max: 120),
-                _numberField('Taxa anual', annualRate, '%', min: 0, max: 1000),
+                _numberField(
+                  'Prazo',
+                  term,
+                  isMonthlyCredit ? 'dias' : 'meses',
+                  min: 1,
+                  max: isMonthlyCredit ? 30 : 120,
+                  onChanged: isMonthlyCredit
+                      ? (_) {
+                          final days = number(term).round();
+                          annualRate.text = days <= 14 ? '20' : '30';
+                          setState(() {});
+                        }
+                      : null,
+                ),
+                _numberField(
+                  isMonthlyCredit ? 'Taxa do período' : 'Taxa anual',
+                  annualRate,
+                  '%',
+                  min: 0,
+                  max: 1000,
+                  readOnly: isMonthlyCredit,
+                  hint: isMonthlyCredit
+                      ? '20% até 14 dias; 30% até 30 dias'
+                      : null,
+                ),
                 _numberField(
                   'Taxa de abertura',
                   originationFee,
@@ -232,19 +322,47 @@ class _SimulatorPanelState extends State<SimulatorPanel> {
                   max: 100,
                 ),
                 _numberField('Seguro', insurance, '%', min: 0, max: 100),
-                SizedBox(
-                  height: 52,
-                  child: DropdownButtonFormField<String>(
-                    initialValue: frequency,
+                if (!isMonthlyCredit)
+                  SizedBox(
+                    height: 52,
+                    child: DropdownButtonFormField<String>(
+                      initialValue: frequency,
+                      isExpanded: true,
+                      iconSize: FluentTokens.iconMedium,
+                      style: const TextStyle(fontSize: 13),
+                      decoration: const InputDecoration(
+                        labelText: 'Frequência',
+                        isDense: true,
+                        constraints: BoxConstraints.tightFor(height: 52),
+                      ),
+                      items: ['Mensal', 'Quinzenal', 'Semanal']
+                          .map(
+                            (value) => DropdownMenuItem(
+                              value: value,
+                              child: Text(
+                                value,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 13),
+                              ),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) =>
+                          setState(() => frequency = value ?? frequency),
+                    ),
+                  ),
+                if (!isMonthlyCredit)
+                  DropdownButtonFormField<String>(
+                    initialValue: interestType,
                     isExpanded: true,
                     iconSize: FluentTokens.iconMedium,
                     style: const TextStyle(fontSize: 13),
                     decoration: const InputDecoration(
-                      labelText: 'Frequência',
+                      labelText: 'Método de juros',
                       isDense: true,
                       constraints: BoxConstraints.tightFor(height: 52),
                     ),
-                    items: ['Mensal', 'Quinzenal', 'Semanal']
+                    items: ['Amortização francesa', 'Juros simples']
                         .map(
                           (value) => DropdownMenuItem(
                             value: value,
@@ -257,34 +375,8 @@ class _SimulatorPanelState extends State<SimulatorPanel> {
                         )
                         .toList(),
                     onChanged: (value) =>
-                        setState(() => frequency = value ?? frequency),
+                        setState(() => interestType = value ?? interestType),
                   ),
-                ),
-                DropdownButtonFormField<String>(
-                  initialValue: interestType,
-                  isExpanded: true,
-                  iconSize: FluentTokens.iconMedium,
-                  style: const TextStyle(fontSize: 13),
-                  decoration: const InputDecoration(
-                    labelText: 'Método de juros',
-                    isDense: true,
-                    constraints: BoxConstraints.tightFor(height: 52),
-                  ),
-                  items: ['Amortização francesa', 'Juros simples']
-                      .map(
-                        (value) => DropdownMenuItem(
-                          value: value,
-                          child: Text(
-                            value,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 13),
-                          ),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (value) =>
-                      setState(() => interestType = value ?? interestType),
-                ),
                 TextFormField(
                   readOnly: true,
                   initialValue: _dateLabel(start),
@@ -466,13 +558,16 @@ class _SimulatorPanelState extends State<SimulatorPanel> {
     double max = 100000000,
     String? hint,
     bool decimals = false,
+    bool readOnly = false,
+    ValueChanged<String>? onChanged,
   }) => SizedBox(
     height: 52,
     child: TextFormField(
       controller: controller,
+      readOnly: readOnly,
       style: const TextStyle(fontSize: 13),
       keyboardType: TextInputType.numberWithOptions(decimal: decimals),
-      onChanged: (_) => setState(() {}),
+      onChanged: onChanged ?? (_) => setState(() {}),
       decoration: InputDecoration(
         labelText: label,
         hintText: hint,

@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart' hide Icons;
 import '../../../app/theme/fluent_icons_compat.dart';
+import '../../../app/theme/app_theme.dart';
 import '../../../core/widgets/operation_feedback.dart';
+import '../domain/repository.dart';
 
 class PortfolioView extends StatefulWidget {
-  const PortfolioView({super.key});
+  const PortfolioView({required this.repository, super.key});
+  final Repository repository;
   @override
   State<PortfolioView> createState() => _PortfolioState();
 }
@@ -11,11 +14,48 @@ class PortfolioView extends StatefulWidget {
 class _PortfolioState extends State<PortfolioView> {
   String query = '';
   String filter = 'Todos';
-  final rows = const [
-    _Loan('CR-2026-0303', 'Adelino Armando de Sousa', '5 640 MT', 'Activo'),
-    _Loan('CR-2026-0298', 'Júlio Custódio', '18 200 MT', 'Em atraso'),
-    _Loan('CR-2026-0287', 'Francisco Adelino Rui', '0 MT', 'Liquidado'),
-  ];
+  final rows = <_Loan>[];
+  bool loading = true;
+  bool refreshing = false;
+  String? error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final initialLoad = rows.isEmpty;
+    setState(() {
+      loading = initialLoad;
+      refreshing = !initialLoad;
+      error = null;
+    });
+    try {
+      final data = await widget.repository.get('/loans?limit=100&offset=0');
+      if (!mounted) return;
+      setState(() {
+        rows
+          ..clear()
+          ..addAll(
+            (data as List).map(
+              (row) => _Loan.fromJson(Map<String, dynamic>.from(row as Map)),
+            ),
+          );
+      });
+    } catch (failure) {
+      if (mounted) setState(() => error = '$failure');
+    } finally {
+      if (mounted) {
+        setState(() {
+          loading = false;
+          refreshing = false;
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final shown = rows
@@ -23,7 +63,7 @@ class _PortfolioState extends State<PortfolioView> {
           (r) =>
               (filter == 'Todos' || r.status == filter) &&
               (query.isEmpty ||
-                  '${r.client} ${r.id}'.toLowerCase().contains(
+                  '${r.client} ${r.reference}'.toLowerCase().contains(
                     query.toLowerCase(),
                   )),
         )
@@ -41,7 +81,32 @@ class _PortfolioState extends State<PortfolioView> {
         const SizedBox(height: 18),
         _filters(),
         const SizedBox(height: 12),
-        for (final row in shown) _loanRow(context, row),
+        if (refreshing) const LinearProgressIndicator(),
+        if (error != null)
+          OutlinedButton.icon(
+            onPressed: _load,
+            icon: const Icon(Icons.refresh),
+            label: const Text('Tentar novamente'),
+          )
+        else if (loading)
+          const Padding(
+            padding: EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SyscrediProgressIndicator(size: 42),
+                SizedBox(height: 16),
+                Text('A carregar contratos da carteira…'),
+              ],
+            ),
+          )
+        else if (shown.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(24),
+            child: Text('Nenhum contrato encontrado.'),
+          )
+        else
+          for (final row in shown) _loanRow(context, row),
       ],
     );
   }
@@ -61,12 +126,14 @@ class _PortfolioState extends State<PortfolioView> {
             ),
           ),
           FilledButton.icon(
-            onPressed: () => _toast(c, 'Relatório preparado.'),
+            onPressed: () =>
+                _toast(c, 'Relatório disponível na área de relatórios.'),
             icon: const Icon(Icons.download),
             label: const Text('Exportar'),
           ),
         ],
       );
+
   Widget _filters() => Wrap(
     spacing: 12,
     runSpacing: 10,
@@ -105,34 +172,49 @@ class _PortfolioState extends State<PortfolioView> {
       ),
     ],
   );
-  Widget _cards(BuildContext c) => Wrap(
-    spacing: 12,
-    runSpacing: 12,
-    children: [
-      _card(
-        c,
-        'Capital em carteira',
-        '46 640 MT',
-        Icons.attach_money_rounded,
-        Colors.teal,
-      ),
-      _card(
-        c,
-        'Saldo por receber',
-        '29 840 MT',
-        Icons.wallet,
-        Theme.of(c).colorScheme.primary,
-      ),
-      _card(
-        c,
-        'Taxa de atraso',
-        '24,8%',
-        Icons.warning_amber_rounded,
-        Colors.orange,
-      ),
-      _card(c, 'Contratos activos', '03', Icons.document, Colors.blue),
-    ],
-  );
+
+  Widget _cards(BuildContext c) {
+    final principal = rows.fold<int>(0, (sum, row) => sum + row.principalCents);
+    final balance = rows.fold<int>(0, (sum, row) => sum + row.balanceCents);
+    final active = rows.where((row) => row.status != 'Liquidado').length;
+    final overdue = rows.where((row) => row.status == 'Em atraso').length;
+    final overdueRate = active == 0 ? 0 : overdue * 100 / active;
+    return Wrap(
+      spacing: 12,
+      runSpacing: 12,
+      children: [
+        _card(
+          c,
+          'Capital em carteira',
+          _money(principal),
+          Icons.attach_money_rounded,
+          Colors.teal,
+        ),
+        _card(
+          c,
+          'Saldo por receber',
+          _money(balance),
+          Icons.wallet,
+          Theme.of(c).colorScheme.primary,
+        ),
+        _card(
+          c,
+          'Taxa de atraso',
+          '${overdueRate.toStringAsFixed(1)}%',
+          Icons.warning_amber_rounded,
+          Colors.orange,
+        ),
+        _card(
+          c,
+          'Contratos activos',
+          active.toString().padLeft(2, '0'),
+          Icons.document,
+          Colors.blue,
+        ),
+      ],
+    );
+  }
+
   Widget _card(
     BuildContext c,
     String label,
@@ -162,6 +244,7 @@ class _PortfolioState extends State<PortfolioView> {
       ),
     ),
   );
+
   Widget _loanRow(BuildContext c, _Loan r) => Container(
     padding: const EdgeInsets.symmetric(vertical: 14),
     decoration: BoxDecoration(
@@ -180,20 +263,66 @@ class _PortfolioState extends State<PortfolioView> {
                 r.client,
                 style: const TextStyle(fontWeight: FontWeight.w700),
               ),
-              Text(r.id, style: Theme.of(c).textTheme.bodySmall),
+              Text(r.reference, style: Theme.of(c).textTheme.bodySmall),
             ],
           ),
         ),
-        Expanded(child: Text(r.balance)),
+        Expanded(child: Text(_money(r.balanceCents))),
         _badge(r.status),
         IconButton(
           tooltip: 'Abrir contrato',
-          onPressed: () => _toast(c, 'Contrato ${r.id} aberto.'),
+          onPressed: () => _openContract(c, r),
           icon: const Icon(Icons.visibility_outlined),
         ),
       ],
     ),
   );
+
+  Future<void> _openContract(BuildContext context, _Loan loan) async {
+    try {
+      final data = await widget.repository.get(
+        '/loans/${loan.id}/installments',
+      );
+      if (!context.mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text('Contrato ${loan.reference}'),
+          content: SizedBox(
+            width: 720,
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  for (final raw in data as List)
+                    ListTile(
+                      title: Text('Prestação ${(raw as Map)['number']}'),
+                      subtitle: Text('${raw['due_date']}'),
+                      trailing: Text(
+                        _money(
+                          (num.tryParse('${raw['remaining_cents']}') ?? 0)
+                              .round(),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Fechar'),
+            ),
+          ],
+        ),
+      );
+    } catch (failure) {
+      if (context.mounted) {
+        await showFeedbackDialog(context, message: '$failure', success: false);
+      }
+    }
+  }
+
   Widget _badge(String text) {
     final color = text == 'Em atraso'
         ? Colors.orange
@@ -213,6 +342,7 @@ class _PortfolioState extends State<PortfolioView> {
     );
   }
 
+  String _money(int cents) => '${(cents / 100).toStringAsFixed(2)} MT';
   void _toast(BuildContext c, String m) => showFeedbackDialog(c, message: m);
 }
 
@@ -441,8 +571,33 @@ class _CollectionsState extends State<CollectionsView> {
 }
 
 class _Loan {
-  const _Loan(this.id, this.client, this.balance, this.status);
-  final String id, client, balance, status;
+  const _Loan(
+    this.id,
+    this.reference,
+    this.client,
+    this.principalCents,
+    this.balanceCents,
+    this.status,
+  );
+  final String id, reference, client, status;
+  final int principalCents, balanceCents;
+
+  factory _Loan.fromJson(Map<String, dynamic> row) {
+    final rawStatus = '${row['status'] ?? ''}';
+    final status = rawStatus == 'settled' || rawStatus == 'paid'
+        ? 'Liquidado'
+        : rawStatus == 'overdue'
+        ? 'Em atraso'
+        : 'Activo';
+    return _Loan(
+      '${row['id'] ?? ''}',
+      '${row['contract_number'] ?? row['number'] ?? row['id'] ?? ''}',
+      '${row['client_name'] ?? 'Cliente'}',
+      (num.tryParse('${row['principal_cents']}') ?? 0).round(),
+      (num.tryParse('${row['balance_cents']}') ?? 0).round(),
+      status,
+    );
+  }
 }
 
 class _Collection {

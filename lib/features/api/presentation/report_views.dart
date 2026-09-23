@@ -1,14 +1,13 @@
-import 'dart:typed_data';
-import '../../settings/presentation/institution_branding.dart';
 import 'package:flutter/material.dart' hide Icons;
 import 'package:file_selector/file_selector.dart';
-import 'package:pdf/widgets.dart' as pw;
 import '../../../app/theme/fluent_icons_compat.dart';
 import '../../../core/widgets/operation_feedback.dart';
+import '../domain/repository.dart';
 
 class ReportView extends StatelessWidget {
-  const ReportView({required this.kind, super.key});
+  const ReportView({required this.kind, required this.repository, super.key});
   final String kind;
+  final Repository repository;
 
   @override
   Widget build(BuildContext context) {
@@ -206,65 +205,19 @@ class ReportView extends StatelessWidget {
 
   Future<void> _export(BuildContext context, {required bool pdf}) async {
     try {
-      final extension = pdf ? 'pdf' : 'xls';
+      final regulatory =
+          kind == 'Mensal para BM' || kind == 'Trimestral para BM';
+      final extension = pdf ? 'pdf' : 'csv';
+      final base = regulatory ? 'central-bank' : 'portfolio';
       final location = await getSaveLocation(
         suggestedName: '${kind.toLowerCase().replaceAll(' ', '_')}.$extension',
       );
       if (location == null) return;
-      final rows = _configs[kind]?.rows ?? const <List<String>>[];
-      if (pdf) {
-        final document = pw.Document();
-        final branding = InstitutionDocument();
-        document.addPage(
-          pw.MultiPage(
-            pageTheme: branding.pageTheme(),
-            header: branding.header,
-            footer: branding.footer,
-            build: (_) => [
-              pw.Text(
-                '${branding.data['tradeName']}',
-                style: pw.TextStyle(
-                  fontSize: 22,
-                  fontWeight: pw.FontWeight.bold,
-                ),
-              ),
-              pw.SizedBox(height: 12),
-              pw.Text(
-                _configs[kind]?.title ?? kind,
-                style: pw.TextStyle(
-                  fontSize: 18,
-                  fontWeight: pw.FontWeight.bold,
-                ),
-              ),
-              pw.SizedBox(height: 8),
-              pw.Text(_configs[kind]?.subtitle ?? ''),
-              pw.SizedBox(height: 20),
-              pw.Table.fromTextArray(
-                headers: const ['Descrição', 'Valor', 'Referência'],
-                data: rows,
-              ),
-              branding.signature('Relatório'),
-            ],
-          ),
-        );
-        await XFile.fromData(
-          await document.save(),
-          mimeType: 'application/pdf',
-        ).saveTo(location.path);
-      } else {
-        final lines = <String>[
-          'Descrição,Valor,Referência',
-          ...rows.map(
-            (row) => row
-                .map((value) => '"${value.replaceAll('"', '""')}"')
-                .join(','),
-          ),
-        ];
-        await XFile.fromData(
-          Uint8List.fromList(lines.join('\n').codeUnits),
-          mimeType: 'application/vnd.ms-excel',
-        ).saveTo(location.path);
-      }
+      final bytes = await repository.bytes('/reports/$base.$extension');
+      await XFile.fromData(
+        bytes,
+        mimeType: pdf ? 'application/pdf' : 'text/csv',
+      ).saveTo(location.path);
       if (context.mounted)
         _message(context, 'Ficheiro exportado em ${location.path}');
     } catch (error) {

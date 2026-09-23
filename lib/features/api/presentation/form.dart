@@ -55,20 +55,121 @@ class _FormState extends State<_Form> {
   }
 
   void submit() {
-    if (!form.currentState!.validate()) return;
+    FocusScope.of(context).unfocus();
+    if (form.currentState?.validate() != true) {
+      setState(() {});
+      return;
+    }
     final result = <String, dynamic>{};
-    for (final f in widget.fields) {
-      final value = controllers[f.key]!.text.trim();
-      if (f.optional && value.isEmpty) continue;
-      result[f.key] = switch (f.kind) {
-        'money' || 'rate' => moneyInput(value),
-        'int' => int.parse(value),
-        'bool' => value == 'true',
-        'date' => DateTime.parse(value).toUtc().toIso8601String(),
-        _ => value,
-      };
+    try {
+      for (final f in widget.fields) {
+        final value = controllers[f.key]!.text.trim();
+        if (f.optional && value.isEmpty) continue;
+        result[f.key] = switch (f.kind) {
+          'money' || 'rate' => moneyInput(value),
+          'int' => int.parse(value),
+          'bool' => value == 'true',
+          'date' => DateTime.parse(value).toUtc().toIso8601String(),
+          _ => value,
+        };
+      }
+    } catch (_) {
+      setState(() {});
+      return;
     }
     Navigator.pop(context, result);
+  }
+
+  String? _validateField(Field field, String? raw) {
+    final value = raw?.trim() ?? '';
+    if (value.isEmpty) {
+      return field.optional ? null : 'Preencha este campo.';
+    }
+    if (field.resource != null && !_isUuid(value)) {
+      return 'Seleccione um registo válido.';
+    }
+    if (_emailKeys.contains(field.key) && !_isEmail(value)) {
+      return 'Introduza um endereço de email válido.';
+    }
+    if (_phoneKeys.contains(field.key) && !_isMozambiquePhone(value)) {
+      return 'Introduza um telefone moçambicano válido.';
+    }
+    if (field.kind == 'date' && DateTime.tryParse(value) == null) {
+      return 'Seleccione uma data válida.';
+    }
+    if (field.kind == 'int') {
+      final parsed = int.tryParse(value);
+      if (parsed == null || parsed < 1)
+        return 'Introduza um número inteiro positivo.';
+    }
+    if (field.kind == 'money' || field.kind == 'rate') {
+      try {
+        final parsed = moneyInput(value);
+        if (parsed < 0) return 'O valor não pode ser negativo.';
+        if (field.kind == 'rate' && parsed > 100000) {
+          return 'Introduza uma percentagem válida.';
+        }
+      } catch (_) {
+        return 'Introduza um valor válido com até duas casas decimais.';
+      }
+    }
+    if (_documentKeys.contains(field.key) && value.length < 3) {
+      return 'Introduza um documento válido.';
+    }
+    if (_nameKeys.contains(field.key) && value.length < 2) {
+      return 'Introduza um nome válido.';
+    }
+    return null;
+  }
+
+  bool _isUuid(String value) => RegExp(
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+  ).hasMatch(value);
+
+  bool _isEmail(String value) =>
+      RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(value);
+
+  bool _isMozambiquePhone(String value) => RegExp(
+    r'^(?:\+?258)?8[2-7]\d{7}$',
+  ).hasMatch(value.replaceAll(RegExp(r'[\s-]'), ''));
+
+  static const _emailKeys = {'email', 'managerEmail'};
+  static const _phoneKeys = {'phone', 'telephone', 'contact'};
+  static const _documentKeys = {'document', 'registrationNumber', 'taxNumber'};
+  static const _nameKeys = {
+    'name',
+    'legalName',
+    'tradingName',
+    'representative',
+    'managerName',
+  };
+
+  DateTime? _dateFromController(TextEditingController controller) {
+    final value = controller.text.trim();
+    if (value.isEmpty) return null;
+    return DateTime.tryParse(value)?.toLocal();
+  }
+
+  String _dateValue(DateTime date) =>
+      '${date.year.toString().padLeft(4, '0')}-'
+      '${date.month.toString().padLeft(2, '0')}-'
+      '${date.day.toString().padLeft(2, '0')}';
+
+  Future<void> _pickDate(Field field, TextEditingController controller) async {
+    final now = DateTime.now();
+    final initial = _dateFromController(controller) ?? now;
+    final selected = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(1900),
+      lastDate: DateTime(now.year + 100, 12, 31),
+      helpText: field.label,
+      cancelText: 'Cancelar',
+      confirmText: 'Seleccionar',
+    );
+    if (selected != null && mounted) {
+      setState(() => controller.text = _dateValue(selected));
+    }
   }
 
   @override
@@ -101,17 +202,17 @@ class _FormState extends State<_Form> {
                             )
                             .toList(),
                         onChanged: (v) => controller.text = v ?? '',
-                        validator: (v) => v == null && !f.optional
-                            ? 'Seleccione uma opção.'
-                            : null,
+                        validator: (v) => _validateField(f, v),
                       )
                     : TextFormField(
                         controller: controller,
-                        readOnly: f.resource != null,
+                        readOnly: f.resource != null || f.kind == 'date',
                         decoration: InputDecoration(
                           labelText: f.label,
                           helperText: labels[f.key],
-                          suffixIcon: f.resource != null
+                          suffixIcon: f.kind == 'date'
+                              ? const Icon(Icons.calendar_today_outlined)
+                              : f.resource != null
                               ? const Icon(Icons.search)
                               : null,
                         ),
@@ -120,7 +221,9 @@ class _FormState extends State<_Form> {
                                 decimal: true,
                               )
                             : TextInputType.text,
-                        onTap: f.resource == null
+                        onTap: f.kind == 'date'
+                            ? () => _pickDate(f, controller)
+                            : f.resource == null
                             ? null
                             : () async {
                                 final picked = await showDialog<Json>(
@@ -138,38 +241,7 @@ class _FormState extends State<_Form> {
                                   });
                                 }
                               },
-                        validator: (v) {
-                          final value = v?.trim() ?? '';
-                          if (value.isEmpty) {
-                            return f.optional ? null : 'Campo obrigatório.';
-                          }
-                          try {
-                            if (['money', 'rate'].contains(f.kind)) {
-                              moneyInput(value);
-                            }
-                            if (f.kind == 'int' &&
-                                (int.tryParse(value) == null ||
-                                    int.parse(value) < 1)) {
-                              return 'Introduza um inteiro positivo.';
-                            }
-                            if (f.kind == 'date' &&
-                                !RegExp(
-                                  r'^\d{4}-\d{2}-\d{2}$',
-                                ).hasMatch(value)) {
-                              return 'Use AAAA-MM-DD.';
-                            }
-                            if (f.kind == 'date') {
-                              final parsed = DateTime.parse(value);
-                              if (parsed.toIso8601String().split('T').first !=
-                                  value) {
-                                return 'Data inválida.';
-                              }
-                            }
-                          } catch (_) {
-                            return 'Valor inválido; use até duas casas decimais.';
-                          }
-                          return null;
-                        },
+                        validator: (v) => _validateField(f, v),
                       ),
               );
             }).toList(),
