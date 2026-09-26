@@ -531,11 +531,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
           '${widget.session.profile?['organization_name'] ?? widget.session.profile?['organizationName'] ?? ''}',
       repository: api,
     );
-    institutionSettings.load().then((_) {
-      if (mounted && institutionSettings.error == null)
-        applyInstitutionSettings(institutionSettings.saved);
-    });
-    _resolveOrganizationName();
+    _initializeInstitutionSettings();
     _loadSubscription();
     load();
     if (!_isWidgetTest) _schedulePendingRefresh();
@@ -693,6 +689,16 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     } catch (_) {
       // The profile menu falls back to a neutral label, never to an ID.
     }
+  }
+
+  Future<void> _initializeInstitutionSettings() async {
+    await Future.wait([institutionSettings.load(), _resolveOrganizationName()]);
+    if (!mounted || institutionSettings.error != null) return;
+    final resolved = organizationName?.trim() ?? '';
+    if (resolved.isNotEmpty) {
+      institutionSettings.applyOrganizationName(resolved);
+    }
+    applyInstitutionSettings(institutionSettings.saved);
   }
 
   Future<void> load() async {
