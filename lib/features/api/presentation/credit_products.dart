@@ -1,0 +1,879 @@
+import '../../../core/widgets/premium_dialog.dart';
+import 'package:flutter/material.dart' hide Icons;
+import '../../../app/theme/fluent_icons_compat.dart';
+import '../../../app/theme/app_theme.dart';
+import '../../../core/widgets/operation_feedback.dart';
+import '../domain/repository.dart';
+
+class CreditProductsView extends StatefulWidget {
+  const CreditProductsView({required this.repository, super.key});
+  final Repository repository;
+  @override
+  State<CreditProductsView> createState() => _CreditProductsState();
+}
+
+class _CreditProductsState extends State<CreditProductsView> {
+  final searchController = TextEditingController();
+  String query = '';
+  String status = 'Todos';
+  final products = <_Product>[];
+  bool loading = true;
+  bool refreshing = false;
+  String? error;
+  bool ascending = true;
+  String? processingProductId;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    searchController.dispose();
+    super.dispose();
+  }
+
+  String _normalizeSearch(String value) => value
+      .toLowerCase()
+      .replaceAll(RegExp('[áàâãä]'), 'a')
+      .replaceAll(RegExp('[éèêë]'), 'e')
+      .replaceAll(RegExp('[íìîï]'), 'i')
+      .replaceAll(RegExp('[óòôõö]'), 'o')
+      .replaceAll(RegExp('[úùûü]'), 'u')
+      .replaceAll('ç', 'c');
+
+  Future<void> _load() async {
+    final initialLoad = products.isEmpty;
+    setState(() {
+      loading = initialLoad;
+      refreshing = !initialLoad;
+      error = null;
+    });
+    try {
+      final data = await widget.repository.get('/products?limit=100&offset=0');
+      if (!mounted) return;
+      setState(() {
+        products
+          ..clear()
+          ..addAll(
+            (data as List).map(
+              (row) => _Product.fromJson(Map<String, dynamic>.from(row as Map)),
+            ),
+          );
+      });
+    } catch (failure) {
+      if (mounted) setState(() => error = '$failure');
+    } finally {
+      if (mounted) {
+        setState(() {
+          loading = false;
+          refreshing = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final normalizedQuery = _normalizeSearch(query.trim());
+    final visible =
+        products
+            .where(
+              (p) =>
+                  (status == 'Todos' || p.status == status) &&
+                  (normalizedQuery.isEmpty ||
+                      _normalizeSearch(
+                        '${p.name} ${p.code} ${p.type} ${p.description}',
+                      ).contains(normalizedQuery)),
+            )
+            .toList()
+          ..sort(
+            (left, right) => ascending
+                ? left.name.compareTo(right.name)
+                : right.name.compareTo(left.name),
+          );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(
+              Icons.apps,
+              size: 32,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Produtos de crédito',
+                    style: Theme.of(context).textTheme.headlineSmall,
+                  ),
+                  const Text(
+                    'Configure ofertas, limites, juros e regras de elegibilidade.',
+                  ),
+                ],
+              ),
+            ),
+            FilledButton.icon(
+              onPressed: () => _form(context),
+              icon: const Icon(Icons.add),
+              label: const Text('Novo produto'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 18),
+        Wrap(
+          spacing: 12,
+          runSpacing: 10,
+          children: [
+            SizedBox(
+              width: 300,
+              child: TextField(
+                controller: searchController,
+                decoration: const InputDecoration(
+                  labelText: 'Pesquisar produto, código ou tipo',
+                  prefixIcon: Icon(Icons.search),
+                ),
+                onChanged: (v) => setState(() => query = v),
+              ),
+            ),
+            SizedBox(
+              width: 170,
+              child: DropdownButtonFormField<String>(
+                initialValue: status,
+                isExpanded: true,
+                decoration: const InputDecoration(labelText: 'Estado'),
+                items: const [
+                  DropdownMenuItem(value: 'Todos', child: Text('Todos')),
+                  DropdownMenuItem(value: 'Activo', child: Text('Activos')),
+                  DropdownMenuItem(value: 'Rascunho', child: Text('Rascunhos')),
+                  DropdownMenuItem(value: 'Inactivo', child: Text('Inactivos')),
+                ],
+                onChanged: (v) => setState(() => status = v ?? 'Todos'),
+              ),
+            ),
+            OutlinedButton.icon(
+              onPressed: () => setState(() => ascending = !ascending),
+              icon: const Icon(Icons.sync),
+              label: const Text('Ordenar'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        if (refreshing) const LinearProgressIndicator(),
+        if (error != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: OutlinedButton.icon(
+              onPressed: _load,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Tentar novamente'),
+            ),
+          ),
+        if (loading && products.isEmpty)
+          const SizedBox(
+            height: 220,
+            child: CenteredLoadingState(
+              message: 'A carregar produtos de crédito…',
+            ),
+          )
+        else
+          Card(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: DataTable(
+                columns: const [
+                  DataColumn(label: Text('PRODUTO')),
+                  DataColumn(label: Text('TIPO')),
+                  DataColumn(label: Text('ESTADO')),
+                  DataColumn(label: Text('LIMITES')),
+                  DataColumn(label: Text('JUROS')),
+                  DataColumn(label: Text('PRAZO')),
+                  DataColumn(label: Text('PAGAMENTO')),
+                  DataColumn(label: Text('ACÇÕES')),
+                ],
+                rows: [
+                  for (final p in visible)
+                    DataRow(
+                      cells: [
+                        DataCell(
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                p.name,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              Text(
+                                p.code,
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            ],
+                          ),
+                        ),
+                        DataCell(Text(p.type)),
+                        DataCell(_badge(p.status)),
+                        DataCell(
+                          Text(
+                            '${p.min.toStringAsFixed(0)}–${p.max.toStringAsFixed(0)} ${p.currency}',
+                          ),
+                        ),
+                        DataCell(Text(p.rate)),
+                        DataCell(Text(p.term)),
+                        DataCell(Text(p.frequency)),
+                        DataCell(
+                          Row(
+                            children: [
+                              IconButton(
+                                tooltip: 'Ver produto',
+                                onPressed: processingProductId == p.id
+                                    ? null
+                                    : () => _details(context, p),
+                                icon: const Icon(Icons.visibility_outlined),
+                              ),
+                              IconButton(
+                                tooltip: 'Editar',
+                                onPressed:
+                                    p.statusValue != 'active' ||
+                                        processingProductId == p.id
+                                    ? null
+                                    : () => _form(context, product: p),
+                                icon: const Icon(Icons.edit),
+                              ),
+                              IconButton(
+                                tooltip: 'Simular',
+                                onPressed:
+                                    p.statusValue != 'active' ||
+                                        processingProductId == p.id
+                                    ? null
+                                    : () => _simulate(context, p),
+                                icon: const Icon(Icons.calculate_outlined),
+                              ),
+                              if (processingProductId == p.id)
+                                const Padding(
+                                  padding: EdgeInsets.all(12),
+                                  child: SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  ),
+                                )
+                              else
+                                IconButton(
+                                  tooltip: p.statusValue == 'active'
+                                      ? 'Desactivar produto'
+                                      : 'Activar produto',
+                                  onPressed: () => _toggle(p),
+                                  icon: Icon(
+                                    p.statusValue == 'active'
+                                        ? Icons.close
+                                        : Icons.check_circle_outline,
+                                    color: p.statusValue == 'active'
+                                        ? Theme.of(context).colorScheme.error
+                                        : Colors.teal,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _badge(String value) {
+    final c = value == 'Activo'
+        ? Colors.teal
+        : value == 'Rascunho'
+        ? Colors.orange
+        : Colors.grey;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: c.withValues(alpha: .12),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Text(
+        value,
+        style: TextStyle(color: c, fontWeight: FontWeight.w700),
+      ),
+    );
+  }
+
+  Future<void> _form(BuildContext context, {_Product? product}) async {
+    final form = GlobalKey<FormState>();
+    final name = TextEditingController(text: product?.name);
+    final code = TextEditingController(text: product?.code);
+    final description = TextEditingController(text: product?.description);
+    final min = TextEditingController(text: product?.min.toStringAsFixed(0));
+    final max = TextEditingController(text: product?.max.toStringAsFixed(0));
+    var type = product?.type ?? 'Pessoal';
+    var method = product?.method ?? 'Saldo decrescente';
+    var period = product?.period ?? 'Anual';
+    var minTerm = '${product?.minMonths ?? 1} mês';
+    var maxTerm = '${product?.maxMonths ?? 12} meses';
+    var frequency = product?.frequency ?? 'Mensal';
+    String? validateAmounts() {
+      final minimum = num.tryParse(min.text.trim());
+      final maximum = num.tryParse(max.text.trim());
+      if (minimum == null || maximum == null) return null;
+      if (minimum <= 0 || maximum <= 0) {
+        return 'Os montantes devem ser superiores a zero.';
+      }
+      if (minimum > maximum) {
+        return 'O montante mínimo não pode superar o máximo.';
+      }
+      if (_months(minTerm) > _months(maxTerm)) {
+        return 'O prazo mínimo não pode superar o prazo máximo.';
+      }
+      return null;
+    }
+
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+        contentPadding: const EdgeInsets.fromLTRB(28, 8, 28, 8),
+        actionsPadding: const EdgeInsets.fromLTRB(28, 0, 28, 22),
+        title: Text(
+          product == null
+              ? 'Novo produto de crédito'
+              : 'Editar produto de crédito',
+        ),
+        content: SizedBox(
+          width: 760,
+          child: Form(
+            key: form,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _section('Identificação e descrição'),
+                  _fields([
+                    _field(name, 'Nome do produto'),
+                    _field(code, 'Código único'),
+                  ]),
+                  _formFieldSpacing(
+                    _field(description, 'Descrição comercial', lines: 2),
+                  ),
+                  _section('Limites e juros'),
+                  _fields([
+                    _field(min, 'Montante mínimo'),
+                    _field(max, 'Montante máximo'),
+                    _select(
+                      'Tipo de crédito',
+                      [
+                        'Pessoal',
+                        'Consumo',
+                        'Empresarial',
+                        'Emergência',
+                        'Salário',
+                        'Grupo',
+                      ],
+                      initial: type,
+                      onChanged: (value) => type = value,
+                    ),
+                  ]),
+                  _fields([
+                    _select(
+                      'Método de cálculo',
+                      ['Juro flat', 'Saldo decrescente', 'Anuidade'],
+                      initial: method,
+                      onChanged: (value) => method = value,
+                    ),
+                    _select(
+                      'Periodicidade da taxa',
+                      ['Mensal', 'Trimestral', 'Anual'],
+                      initial: period,
+                      onChanged: (value) => period = value,
+                    ),
+                  ]),
+                  _section('Prazo e prestações'),
+                  _fields([
+                    _select(
+                      'Prazo mínimo',
+                      ['1 mês', '3 meses', '6 meses'],
+                      initial: minTerm,
+                      onChanged: (value) => minTerm = value,
+                    ),
+                    _select(
+                      'Prazo máximo',
+                      ['6 meses', '12 meses', '24 meses'],
+                      initial: maxTerm,
+                      onChanged: (value) => maxTerm = value,
+                    ),
+                    _select(
+                      'Frequência',
+                      ['Semanal', 'Quinzenal', 'Mensal'],
+                      initial: frequency,
+                      onChanged: (value) => frequency = value,
+                    ),
+                  ]),
+                  _fields([
+                    _select('Carência', ['Sem carência', '15 dias', '30 dias']),
+                    _select('Liquidação antecipada', [
+                      'Permitida',
+                      'Não permitida',
+                    ]),
+                  ]),
+                  _section('Comissões, garantias e regras'),
+                  _commissionFields(),
+                ],
+              ),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (!form.currentState!.validate()) return;
+              final error = validateAmounts();
+              if (error != null) {
+                ScaffoldMessenger.of(dialog)
+                  ..hideCurrentSnackBar()
+                  ..showSnackBar(SnackBar(content: Text(error)));
+                return;
+              }
+              Navigator.pop(dialog, true);
+            },
+            child: const Text('Guardar produto'),
+          ),
+        ],
+      ),
+    );
+    if (saved != true || !mounted) return;
+    final minAmount = (num.tryParse(min.text.trim()) ?? 0) * 100;
+    final maxAmount = (num.tryParse(max.text.trim()) ?? 0) * 100;
+    final payload = <String, dynamic>{
+      'name': name.text.trim(),
+      'code': code.text.trim(),
+      'description': description.text.trim(),
+      'annualRateBps': product?.annualRateBps ?? 3000,
+      'minAmountCents': minAmount.round(),
+      'maxAmountCents': maxAmount.round(),
+      'minMonths': _months(minTerm),
+      'maxMonths': _months(maxTerm),
+      'currency': product?.currency ?? 'MZN',
+      'productType': _typeValue(type),
+      'ratePeriod': period == 'Mensal' ? 'monthly' : 'annual',
+      'interestMethod': method == 'Juro flat' ? 'flat' : 'declining_balance',
+      'paymentFrequency': _frequencyValue(frequency),
+      'status': product?.statusValue ?? 'active',
+      'fees': product?.fees ?? <dynamic>[],
+      'penalties': product?.penalties ?? <dynamic>[],
+      'gracePeriodDays': product?.gracePeriodDays ?? 0,
+      'eligibilityRules': product?.eligibilityRules ?? <String, dynamic>{},
+    };
+    if (product != null) {
+      payload['version'] = product.version;
+      payload['active'] = product.statusValue == 'active';
+    }
+    try {
+      await widget.repository.write(
+        product == null ? 'POST' : 'PATCH',
+        product == null ? '/products' : '/products/${product.id}',
+        payload,
+      );
+      await _load();
+      if (mounted && context.mounted) {
+        await showFeedbackDialog(
+          context,
+          title: 'Produto guardado',
+          message: 'O produto de crédito foi confirmado pelo servidor.',
+          success: true,
+        );
+      }
+    } catch (failure) {
+      if (mounted && context.mounted) {
+        await showFeedbackDialog(
+          context,
+          title: 'Produto não guardado',
+          message: feedbackMessage(failure),
+          success: false,
+        );
+      }
+    }
+  }
+
+  Widget _section(String title) => Container(
+    width: double.infinity,
+    margin: const EdgeInsets.only(top: 22, bottom: 14),
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+    decoration: BoxDecoration(
+      color: Theme.of(context).colorScheme.primary.withValues(alpha: .07),
+      borderRadius: BorderRadius.circular(10),
+      border: Border.all(
+        color: Theme.of(context).colorScheme.primary.withValues(alpha: .14),
+      ),
+    ),
+    child: Text(
+      title,
+      style: TextStyle(
+        color: Theme.of(context).colorScheme.primary,
+        fontWeight: FontWeight.w800,
+        fontSize: 14,
+      ),
+    ),
+  );
+  Widget _fields(List<Widget> children) => Padding(
+    padding: const EdgeInsets.only(bottom: 16),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var index = 0; index < children.length; index++) ...[
+          SizedBox(width: double.infinity, child: children[index]),
+          if (index < children.length - 1) const SizedBox(height: 16),
+        ],
+      ],
+    ),
+  );
+
+  Widget _formFieldSpacing(Widget child) => Padding(
+    padding: const EdgeInsets.only(bottom: 16),
+    child: SizedBox(width: double.infinity, child: child),
+  );
+
+  Widget _commissionFields() => _fields([
+    _field(
+      TextEditingController(),
+      'Comissões e taxas (preparo, desembolso, selo)',
+      optional: true,
+    ),
+    _field(
+      TextEditingController(),
+      'Multas por atraso e configuração de mora',
+      optional: true,
+    ),
+    _field(
+      TextEditingController(),
+      'Garantias/avalistas exigidos',
+      optional: true,
+    ),
+    _field(
+      TextEditingController(),
+      'Critérios de elegibilidade e documentos obrigatórios',
+      lines: 3,
+      optional: true,
+    ),
+    _field(
+      TextEditingController(),
+      'Regras de aprovação e incumprimento',
+      lines: 3,
+      optional: true,
+    ),
+  ]);
+
+  Widget _field(
+    TextEditingController c,
+    String label, {
+    int lines = 1,
+    bool optional = false,
+    double? width,
+  }) => SizedBox(
+    width: width ?? double.infinity,
+    height: lines == 1 ? 56 : null,
+    child: TextFormField(
+      controller: c,
+      maxLines: lines,
+      minLines: lines,
+      textAlignVertical: TextAlignVertical.center,
+      validator: (v) =>
+          !optional && (v == null || v.trim().isEmpty) ? 'Obrigatório' : null,
+      decoration: InputDecoration(
+        labelText: label,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 16,
+        ),
+      ),
+    ),
+  );
+  Widget _select(
+    String label,
+    List<String> values, {
+    String? initial,
+    ValueChanged<String>? onChanged,
+  }) => SizedBox(
+    width: double.infinity,
+    height: 56,
+    child: DropdownButtonFormField<String>(
+      initialValue: values.contains(initial) ? initial : values.first,
+      isExpanded: true,
+      decoration: InputDecoration(
+        labelText: label,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 16,
+        ),
+      ),
+      items: [
+        for (final v in values)
+          DropdownMenuItem(
+            value: v,
+            child: Text(v, overflow: TextOverflow.ellipsis),
+          ),
+      ],
+      onChanged: (value) {
+        if (value != null) onChanged?.call(value);
+      },
+    ),
+  );
+  void _details(BuildContext c, _Product p) => showDialog<void>(
+    context: c,
+    builder: (dialog) => PremiumDialog(
+      title: Text(p.name),
+      subtitle: 'Produto de crédito · ${p.code}',
+      icon: Icons.apps,
+      content: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _badge(p.status),
+          const SizedBox(height: 20),
+          DetailFields(
+            fields: [
+              ('Tipo de crédito', p.type),
+              ('Moeda', p.currency),
+              ('Limites', '${p.min} – ${p.max} ${p.currency}'),
+              ('Taxa', p.rate),
+              ('Prazo', p.term),
+              ('Frequência', p.frequency),
+            ],
+          ),
+        ],
+      ),
+      actions: [
+        OutlinedButton.icon(
+          onPressed: () => _simulate(c, p),
+          icon: const Icon(Icons.calculate_outlined),
+          label: const Text('Simular'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(dialog),
+          child: const Text('Fechar'),
+        ),
+      ],
+    ),
+  );
+  void _simulate(BuildContext c, _Product p) => showDialog<void>(
+    context: c,
+    builder: (dialog) => PremiumDialog(
+      subtitle: 'Estimativa de crédito · Dados de demonstração',
+      title: Text('Simulador · ${p.name}'),
+      content: const Text(
+        'Montante solicitado: 20 000 MZN\nJuros estimados: 5 000 MZN\nEncargos: 350 MZN\nTotal a pagar: 25 350 MZN\n12 prestações de 2 112,50 MZN\n\nPlano: 10/10/2026 · 2 112,50 MZN\n10/11/2026 · 2 112,50 MZN\n10/12/2026 · 2 112,50 MZN',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialog),
+          child: const Text('Fechar'),
+        ),
+      ],
+    ),
+  );
+  Future<void> _toggle(_Product product) async {
+    final activating = product.statusValue != 'active';
+    final action = activating ? 'Activar' : 'Desactivar';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: Text('$action produto de crédito?'),
+        content: Text(
+          activating
+              ? 'O produto “${product.name}” voltará a estar disponível.'
+              : 'O produto “${product.name}” deixará de estar disponível para novas operações.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialog, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: activating
+                  ? Colors.teal
+                  : Theme.of(context).colorScheme.error,
+              foregroundColor: activating
+                  ? Colors.white
+                  : Theme.of(context).colorScheme.onError,
+            ),
+            child: Text(action),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => processingProductId = product.id);
+    try {
+      dynamic response;
+      try {
+        response = await _writeProductStatus(product, activating);
+      } on ApiFailure catch (failure) {
+        if (failure.status != 409) rethrow;
+        await _refreshProduct(product);
+        response = await _writeProductStatus(product, activating);
+      }
+      if (!mounted) return;
+      setState(() {
+        final updated = _responseProduct(response);
+        if (updated != null) {
+          product.raw.addAll(updated);
+        }
+        product.raw['status'] = activating ? 'active' : 'inactive';
+        product.raw['active'] = activating;
+        if (updated == null || updated['version'] == null) {
+          product.raw['version'] = product.version + 1;
+        }
+      });
+      await showFeedbackDialog(
+        context,
+        title: activating ? 'Produto activado' : 'Produto desactivado',
+        message: activating
+            ? 'O produto de crédito foi activado com sucesso.'
+            : 'O produto de crédito foi desactivado com sucesso.',
+        success: true,
+      );
+    } catch (failure) {
+      if (mounted) {
+        await showFeedbackDialog(
+          context,
+          title: 'Estado não actualizado',
+          message: feedbackMessage(failure),
+          success: false,
+        );
+      }
+    } finally {
+      if (mounted) setState(() => processingProductId = null);
+    }
+  }
+
+  Future<dynamic> _writeProductStatus(_Product product, bool activating) =>
+      widget.repository.write('PATCH', '/products/${product.id}', {
+        ...product.payload,
+        'version': product.version,
+        'status': activating ? 'active' : 'inactive',
+        'active': activating,
+      });
+
+  Map<String, dynamic>? _responseProduct(dynamic response) {
+    if (response is! Map) return null;
+    final data = response['data'];
+    if (data is Map) return Map<String, dynamic>.from(data);
+    return Map<String, dynamic>.from(response);
+  }
+
+  Future<void> _refreshProduct(_Product product) async {
+    final data = await widget.repository.get('/products?limit=100&offset=0');
+    final current = (data as List).whereType<Map>().cast<Map>().firstWhere(
+      (row) => '${row['id']}' == product.id,
+      orElse: () => const {},
+    );
+    if (current.isEmpty) {
+      throw const ApiFailure('Produto de crédito não encontrado.', status: 404);
+    }
+    product.raw.addAll(Map<String, dynamic>.from(current));
+  }
+
+  int _months(String value) => int.tryParse(value.split(' ').first) ?? 1;
+  String _typeValue(String value) => switch (value) {
+    'Empresarial' => 'business',
+    'Consumo' => 'consumer',
+    'Emergência' => 'emergency',
+    'Grupo' => 'group',
+    _ => 'individual',
+  };
+  String _frequencyValue(String value) => switch (value) {
+    'Semanal' => 'weekly',
+    'Quinzenal' => 'biweekly',
+    'Trimestral' => 'quarterly',
+    _ => 'monthly',
+  };
+}
+
+class _Product {
+  _Product.fromJson(this.raw);
+  final Map<String, dynamic> raw;
+  String get id => '${raw['id']}';
+  String get name => '${raw['name'] ?? ''}';
+  String get code => '${raw['code'] ?? ''}';
+  String get description => '${raw['description'] ?? ''}';
+  String get currency => '${raw['currency'] ?? 'MZN'}';
+  int get annualRateBps => int.tryParse('${raw['annual_rate_bps']}') ?? 0;
+  int get version => int.tryParse('${raw['version']}') ?? 1;
+  int get minMonths => int.tryParse('${raw['min_months']}') ?? 1;
+  int get maxMonths => int.tryParse('${raw['max_months']}') ?? 1;
+  int get gracePeriodDays => int.tryParse('${raw['grace_period_days']}') ?? 0;
+  double get min => (num.tryParse('${raw['min_amount_cents']}') ?? 0) / 100;
+  double get max => (num.tryParse('${raw['max_amount_cents']}') ?? 0) / 100;
+  String get statusValue =>
+      '${raw['status'] ?? (raw['active'] == true ? 'active' : 'inactive')}';
+  String get status => switch (statusValue) {
+    'draft' => 'Rascunho',
+    'inactive' => 'Inactivo',
+    _ => 'Activo',
+  };
+  String get type => switch ('${raw['product_type'] ?? 'individual'}') {
+    'business' => 'Empresarial',
+    'consumer' => 'Consumo',
+    'emergency' => 'Emergência',
+    'group' || 'solidarity' => 'Grupo',
+    _ => 'Pessoal',
+  };
+  String get rate =>
+      '${(annualRateBps / 100).toStringAsFixed(2)}% ${period.toLowerCase()}';
+  String get period => raw['rate_period'] == 'monthly' ? 'Mensal' : 'Anual';
+  String get method =>
+      raw['interest_method'] == 'flat' ? 'Juro flat' : 'Saldo decrescente';
+  String get term => '$minMonths–$maxMonths meses';
+  String get frequency => switch ('${raw['payment_frequency'] ?? 'monthly'}') {
+    'weekly' => 'Semanal',
+    'biweekly' => 'Quinzenal',
+    'quarterly' => 'Trimestral',
+    _ => 'Mensal',
+  };
+  List<dynamic> get fees =>
+      List<dynamic>.from(raw['fees'] as List? ?? const []);
+  List<dynamic> get penalties =>
+      List<dynamic>.from(raw['penalties'] as List? ?? const []);
+  Map<String, dynamic> get eligibilityRules => Map<String, dynamic>.from(
+    raw['eligibility_rules'] as Map? ?? const <String, dynamic>{},
+  );
+  Map<String, dynamic> get payload => {
+    'name': name,
+    'code': code,
+    'description': description,
+    'annualRateBps': annualRateBps,
+    'minAmountCents': (min * 100).round(),
+    'maxAmountCents': (max * 100).round(),
+    'minMonths': minMonths,
+    'maxMonths': maxMonths,
+    'currency': currency,
+    'productType': '${raw['product_type'] ?? 'individual'}',
+    'ratePeriod': '${raw['rate_period'] ?? 'annual'}',
+    'interestMethod': '${raw['interest_method'] ?? 'declining_balance'}',
+    'paymentFrequency': '${raw['payment_frequency'] ?? 'monthly'}',
+    'fees': fees,
+    'penalties': penalties,
+    'gracePeriodDays': gracePeriodDays,
+    'eligibilityRules': eligibilityRules,
+  };
+}

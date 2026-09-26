@@ -2,6 +2,7 @@ import 'package:flutter/material.dart' hide Icons;
 import '../../app/theme/fluent_icons_compat.dart';
 
 import '../../features/api/domain/repository.dart';
+import '../localization/user_messages.dart';
 import 'equal_button_group.dart';
 
 /// A failed initial load must remain recoverable without restarting the app.
@@ -26,7 +27,7 @@ class WorkspaceLoadError extends StatelessWidget {
       if (failure.status == 403) {
         return 'A sua conta não tem acesso a estes dados. Contacte o administrador.';
       }
-      return failure.message;
+      return userMessage(failure.message, status: failure.status);
     }
     return 'Não foi possível preparar o seu espaço. Verifique a ligação e tente novamente.';
   }

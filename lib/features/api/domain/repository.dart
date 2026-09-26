@@ -74,6 +74,7 @@ abstract interface class AuthGateway {
   String? get userId;
   bool get hasSession;
   Stream<bool> get sessionChanges;
+  Stream<bool> get passwordRecoveryChanges;
   Future<String?> accessToken();
   Future<void> refreshToken();
   Future<void> login(String email, String password);

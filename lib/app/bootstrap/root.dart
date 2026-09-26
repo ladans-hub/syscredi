@@ -6,6 +6,7 @@ import 'composition.dart';
 import 'auth_only_session.dart';
 import '../../features/api/presentation/session_view_model.dart';
 import '../../features/api/presentation/workspace.dart';
+import '../../features/api/application/subscription_service.dart';
 import '../../features/auth/presentation/login_page.dart';
 
 class Root extends StatefulWidget {
@@ -18,6 +19,7 @@ class Root extends StatefulWidget {
 class _RootState extends State<Root> {
   late Future<AppSession> connection;
   AppSession? session;
+  SubscriptionStatus? subscription;
   @override
   void initState() {
     super.initState();
@@ -31,6 +33,9 @@ class _RootState extends State<Root> {
                 : connectAuthOnly())
             .then((value) {
               session = value;
+              SubscriptionService(value.api).status().then((status) {
+                if (mounted) setState(() => subscription = status);
+              });
               return value;
             });
   }
@@ -56,16 +61,20 @@ class _RootState extends State<Root> {
       }
       final session = snapshot.data!;
       assert(() {
-        debugPrint('SysCredi auth screen: callback=${session.profile == null}');
+        debugPrint('Syscredi auth screen: callback=${session.profile == null}');
         return true;
       }());
       return ListenableBuilder(
         listenable: session,
-        builder: (context, _) => session.profile == null
+        builder: (context, _) => session.passwordRecovery
+            ? PasswordRecoveryPage(updatePassword: session.updatePassword)
+            : session.profile == null
             ? LoginPage(
                 login: session.login,
                 recoverPassword: session.recoverPassword,
                 register: session.register,
+                onGuest: session.enterGuest,
+                showActivationContact: subscription?.trial == true,
                 onAuthenticated: (_) {},
               )
             : Workspace(
@@ -98,7 +107,7 @@ class _ConnectionError extends StatelessWidget {
               const Icon(FluentSystemIcons.error, size: 52),
               const SizedBox(height: 18),
               const Text(
-                'Não foi possível ligar ao SysCredi',
+                'Não foi possível ligar ao Syscredi',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
               ),

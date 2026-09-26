@@ -6,6 +6,14 @@ import '../../app/theme/app_theme.dart';
 
 enum FeedbackKind { success, info, error }
 
+String feedbackMessage(Object error) {
+  final value = error.toString().trim();
+  for (final prefix in const ['ApiFailure: ', 'Exception: ']) {
+    if (value.startsWith(prefix)) return value.substring(prefix.length).trim();
+  }
+  return value;
+}
+
 Future<bool> runWithFeedback(
   BuildContext context,
   Future<void> Function() operation, {
@@ -42,7 +50,7 @@ Future<bool> runWithFeedback(
       _ResultDialog(
         kind: FeedbackKind.error,
         title: 'Operação não confirmada',
-        message: error.toString().replaceFirst('Exception: ', ''),
+        message: feedbackMessage(error),
       ),
     );
     return false;
@@ -110,19 +118,40 @@ Future<T?> _showAnimatedDialog<T>(
 class _ProgressDialog extends StatelessWidget {
   const _ProgressDialog();
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-    content: const SizedBox(
-      width: 320,
-      child: Row(
-        children: [
-          SizedBox(width: 24, height: 24, child: SyscrediProgressIndicator()),
-          SizedBox(width: 18),
-          Expanded(child: Text('A aguardar confirmação segura do servidor…')),
-        ],
+  Widget build(BuildContext context) {
+    final compact = MediaQuery.sizeOf(context).width < 420;
+    return AlertDialog(
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: compact ? 16 : 24,
+        vertical: 24,
       ),
-    ),
-  );
+      contentPadding: EdgeInsets.all(compact ? 18 : 22),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      content: SizedBox(
+        width: compact ? 280 : 320,
+        child: Row(
+          children: [
+            SizedBox(
+              width: compact ? 21 : 24,
+              height: compact ? 21 : 24,
+              child: const SyscrediProgressIndicator(),
+            ),
+            SizedBox(width: compact ? 13 : 18),
+            Expanded(
+              child: Text(
+                'A aguardar confirmação segura do servidor…',
+                style: TextStyle(
+                  fontSize: compact ? 13 : 14,
+                  height: 1.35,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _ResultDialog extends StatefulWidget {
@@ -164,6 +193,10 @@ class _ResultDialogState extends State<_ResultDialog>
 
   @override
   Widget build(BuildContext context) {
+    final media = MediaQuery.of(context);
+    final compactWidth = media.size.width < 430;
+    final compactHeight = media.size.height < 650;
+    final compact = compactWidth || compactHeight;
     final dark = Theme.of(context).brightness == Brightness.dark;
     final accent = switch (widget.kind) {
       FeedbackKind.success => const Color(0xFF31E29A),
@@ -181,10 +214,17 @@ class _ResultDialogState extends State<_ResultDialog>
     final palette = brandPalette.value;
     return Dialog(
       backgroundColor: Colors.transparent,
-      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: compactWidth ? 14 : 24,
+        vertical: compactHeight ? 14 : 28,
+      ),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 340),
+        constraints: BoxConstraints(
+          maxWidth: compactWidth ? 360 : 400,
+          maxHeight: media.size.height - (compactHeight ? 28 : 56),
+        ),
         child: Container(
+          key: const ValueKey('feedback-dialog-panel'),
           decoration: BoxDecoration(
             color: panel,
             gradient: LinearGradient(
@@ -212,7 +252,7 @@ class _ResultDialogState extends State<_ResultDialog>
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(compact ? 16 : 18),
             border: Border.all(
               color: palette.primary.withValues(alpha: dark ? .48 : .30),
               width: 1.2,
@@ -227,8 +267,13 @@ class _ResultDialogState extends State<_ResultDialog>
           ),
           child: Stack(
             children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(22, 34, 22, 20),
+              SingleChildScrollView(
+                padding: EdgeInsets.fromLTRB(
+                  compact ? 18 : 26,
+                  compact ? 22 : 30,
+                  compact ? 18 : 26,
+                  compact ? 16 : 22,
+                ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -244,35 +289,39 @@ class _ResultDialogState extends State<_ResultDialog>
                           child: child,
                         ),
                       ),
-                      child: _FeedbackIcon(icon: icon, accent: accent),
+                      child: _FeedbackIcon(
+                        icon: icon,
+                        accent: accent,
+                        compact: compact,
+                      ),
                     ),
-                    const SizedBox(height: 17),
+                    SizedBox(height: compact ? 14 : 20),
                     Text(
                       widget.title,
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         color: text,
-                        fontSize: 21,
-                        height: 1.12,
+                        fontSize: compact ? 20 : 24,
+                        height: 1.15,
                         fontWeight: FontWeight.w800,
-                        letterSpacing: -.7,
+                        letterSpacing: compact ? -.45 : -.7,
                       ),
                     ),
-                    const SizedBox(height: 8),
+                    SizedBox(height: compact ? 9 : 11),
                     Text(
                       widget.message,
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         color: muted,
-                        fontSize: 14,
-                        height: 1.4,
+                        fontSize: compact ? 14 : 15,
+                        height: compact ? 1.4 : 1.45,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
-                    const SizedBox(height: 17),
+                    SizedBox(height: compact ? 18 : 24),
                     SizedBox(
                       width: double.infinity,
-                      height: 44,
+                      height: compact ? 46 : 50,
                       child: FilledButton(
                         style: FilledButton.styleFrom(
                           backgroundColor: brandPalette.value.primary,
@@ -280,10 +329,10 @@ class _ResultDialogState extends State<_ResultDialog>
                             context,
                           ).colorScheme.onPrimary,
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
+                            borderRadius: BorderRadius.circular(10),
                           ),
-                          textStyle: const TextStyle(
-                            fontSize: 15,
+                          textStyle: TextStyle(
+                            fontSize: compact ? 15 : 16,
                             fontWeight: FontWeight.w800,
                           ),
                         ),
@@ -303,30 +352,35 @@ class _ResultDialogState extends State<_ResultDialog>
 }
 
 class _FeedbackIcon extends StatelessWidget {
-  const _FeedbackIcon({required this.icon, required this.accent});
+  const _FeedbackIcon({
+    required this.icon,
+    required this.accent,
+    required this.compact,
+  });
   final IconData icon;
   final Color accent;
+  final bool compact;
   @override
   Widget build(BuildContext context) => Container(
-    width: 77,
-    height: 77,
+    width: compact ? 64 : 78,
+    height: compact ? 64 : 78,
     decoration: BoxDecoration(
       shape: BoxShape.circle,
       color: accent,
       boxShadow: [
         BoxShadow(
           color: accent.withValues(alpha: .28),
-          blurRadius: 16,
-          spreadRadius: 5,
+          blurRadius: compact ? 13 : 16,
+          spreadRadius: compact ? 3 : 5,
         ),
         BoxShadow(
           color: accent.withValues(alpha: .18),
           blurRadius: 0,
-          spreadRadius: 9,
+          spreadRadius: compact ? 6 : 9,
         ),
       ],
       border: Border.all(color: Colors.white.withValues(alpha: .18), width: 2),
     ),
-    child: Icon(icon, color: Colors.white, size: 49),
+    child: Icon(icon, color: Colors.white, size: compact ? 38 : 48),
   );
 }

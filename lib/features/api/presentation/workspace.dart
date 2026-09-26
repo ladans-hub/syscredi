@@ -1,21 +1,42 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart' hide Icons;
 import 'package:flutter/services.dart';
+import 'package:pdf/widgets.dart' as pw;
 import 'package:syscredi/core/widgets/equal_button_group.dart';
 
 import '../../../app/theme/app_theme.dart';
 import '../../../app/theme/design_tokens.dart';
+import '../../../app/theme/fluent_design.dart';
 import '../../../app/theme/fluent_icons_compat.dart';
 import '../../../core/csv/csv_codec.dart';
+import '../../../core/localization/user_messages.dart';
 import '../domain/money.dart';
+import '../domain/formatters.dart';
 import '../domain/repository.dart';
+import '../application/subscription_service.dart';
 import 'form.dart';
 import 'navigation.dart';
 import 'search_dialog.dart';
 import 'session_view_model.dart';
 import 'simulator_panel.dart';
+import 'credit_stages.dart';
+import 'portfolio_views.dart';
+import 'report_views.dart';
+import 'credit_products.dart';
+import 'client_contract_documents.dart';
+import 'finance_views.dart';
+import 'plans_view.dart';
+import 'audit_logs_view.dart';
+import 'admin_views.dart';
+import '../../settings/application/settings_controller.dart';
+import '../../settings/presentation/institution_settings_view.dart';
+import '../../settings/presentation/institution_branding.dart';
+import '../../../core/widgets/premium_dialog.dart';
+import '../../../core/widgets/operation_feedback.dart';
+import 'risk_center_view.dart';
 
 const _stages = {
   'documentation': 'Documentação',
@@ -24,6 +45,35 @@ const _stages = {
   'approved': 'Aprovado',
   'rejected': 'Recusado',
   'disbursed': 'Desembolsado',
+};
+const _creditStageRoutes = {
+  'financing',
+  'financial-analysis',
+  'credit-approval',
+  'credit-authorization',
+  'credit-disbursement',
+  'credit-status',
+  'credit-restructuring',
+};
+const _reportKinds = <String, String>{
+  'report-exports': 'Exportações',
+  'report-records': 'Registos',
+  'report-letters': 'Cartas',
+  'report-bm': 'Carta para BM',
+  'report-credits': 'Créditos',
+  'report-clients': 'Clientes',
+  'report-financial': 'Financeiros',
+  'report-misc': 'Diversos',
+};
+const _financeAreas = <String, String>{
+  'finance-balances': 'Saldos',
+  'finance-reversals': 'Estornos',
+  'finance-income': 'Receitas',
+  'finance-expenses': 'Despesas',
+  'finance-disbursements': 'Desembolsos',
+  'finance-refunds': 'Reembolsos',
+  'finance-overdue': 'Prestações Vencidas',
+  'finance-assets': 'Ativos',
 };
 const _roles = {
   'operator': 'Operador',
@@ -36,6 +86,8 @@ const _methods = {
   'mpesa': 'M-Pesa',
   'emola': 'e-Mola',
   'mkesh': 'mKesh',
+  'bim': 'Millennium BIM',
+  'bci': 'BCI',
 };
 const _labels = {
   'id': 'Referência',
@@ -129,32 +181,53 @@ class _FluentCardState extends State<_FluentCard> {
       onEnter: (_) => setState(() => hovered = true),
       onExit: (_) => setState(() => hovered = false),
       cursor: SystemMouseCursors.basic,
-      child: Material(
-        color: surface,
-        elevation: hovered ? 2 : 1,
-        shadowColor: scheme.shadow.withValues(alpha: .10),
-        shape: RoundedRectangleBorder(
+      child: AnimatedContainer(
+        duration: FluentTokens.fast,
+        curve: FluentTokens.curve,
+        decoration: BoxDecoration(
+          color: surface,
           borderRadius: BorderRadius.circular(12),
-          side: BorderSide(
-            color: hovered ? border : scheme.outlineVariant,
-            width: hovered ? 1.2 : 1,
+          border: Border.all(
+            color: hovered
+                ? border.withValues(alpha: .72)
+                : Color.lerp(scheme.outlineVariant, border, .14)!,
+            width: hovered ? 1.35 : 1,
           ),
+          boxShadow: [
+            BoxShadow(
+              color: scheme.shadow.withValues(alpha: hovered ? .16 : .09),
+              blurRadius: hovered ? 18 : 10,
+              offset: Offset(0, hovered ? 6 : 3),
+            ),
+            if (hovered)
+              BoxShadow(
+                color: border.withValues(alpha: .08),
+                blurRadius: 2,
+                spreadRadius: 1,
+              ),
+          ],
         ),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: null,
-          overlayColor: WidgetStateProperty.resolveWith((states) {
-            if (states.contains(WidgetState.pressed)) {
-              return scheme.primary.withValues(alpha: .10);
-            }
-            if (states.contains(WidgetState.hovered)) {
-              return scheme.primary.withValues(alpha: .04);
-            }
-            return null;
-          }),
-          child: Padding(
-            padding: const EdgeInsets.all(18),
-            child: widget.child,
+        child: Material(
+          type: MaterialType.transparency,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: null,
+            overlayColor: WidgetStateProperty.resolveWith((states) {
+              if (states.contains(WidgetState.pressed)) {
+                return scheme.primary.withValues(alpha: .10);
+              }
+              if (states.contains(WidgetState.hovered)) {
+                return scheme.primary.withValues(alpha: .04);
+              }
+              return null;
+            }),
+            child: Padding(
+              padding: const EdgeInsets.all(18),
+              child: widget.child,
+            ),
           ),
         ),
       ),
@@ -236,6 +309,52 @@ class _DashboardChartPainter extends CustomPainter {
       oldDelegate.values != values || oldDelegate.primary != primary;
 }
 
+class _DashboardDonutPainter extends CustomPainter {
+  _DashboardDonutPainter(this.primary, this.secondary);
+  final Color primary;
+  final Color secondary;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = size.center(Offset.zero);
+    final radius = size.shortestSide / 2 - 8;
+    final track = Paint()
+      ..color = primary.withValues(alpha: .10)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 14
+      ..strokeCap = StrokeCap.round;
+    canvas.drawCircle(center, radius, track);
+    final first = Paint()
+      ..color = primary
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 14
+      ..strokeCap = StrokeCap.round;
+    final second = Paint()
+      ..color = secondary
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 14
+      ..strokeCap = StrokeCap.round;
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: radius),
+      -math.pi / 2,
+      math.pi * 1.55,
+      false,
+      first,
+    );
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: radius),
+      math.pi * 1.05,
+      math.pi * .55,
+      false,
+      second,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _DashboardDonutPainter oldDelegate) =>
+      oldDelegate.primary != primary || oldDelegate.secondary != secondary;
+}
+
 class Workspace extends StatefulWidget {
   const Workspace({required this.session, this.onTheme, super.key});
   final WorkspaceSession session;
@@ -245,6 +364,34 @@ class Workspace extends StatefulWidget {
 }
 
 class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
+  static const _pendingRefreshInterval = Duration(seconds: 3);
+  static const _isWidgetTest = bool.fromEnvironment('FLUTTER_TEST');
+  static const _genderOptions = {
+    'male': 'Masculino',
+    'female': 'Feminino',
+    'other': 'Outro',
+    'not_informed': 'Prefere não informar',
+  };
+
+  Future<void> _feedback(
+    String message, {
+    String title = 'Informação',
+    bool? success,
+  }) => showFeedbackDialog(
+    context,
+    title: title,
+    message: message,
+    success: success,
+  );
+  String get _institutionName =>
+      (institutionBranding.value['tradeName'] ?? 'SysCredi')
+          .toString()
+          .trim()
+          .isEmpty
+      ? 'SysCredi'
+      : '${institutionBranding.value['tradeName']}';
+  late final InstitutionSettingsController institutionSettings;
+  final institutionSettingsKey = GlobalKey<InstitutionSettingsViewState>();
   Repository get api => widget.session.api;
   List<_Section> get sections => [
     if (widget.session.manager)
@@ -258,6 +405,41 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     const _Section('co-signers', 'Co-assinantes', Icons.group_outlined),
     const _Section('products', 'Produtos', Icons.category_outlined),
     const _Section('requests', 'Pedidos', Icons.assignment_outlined),
+    const _Section(
+      'financing',
+      'Financiamento',
+      Icons.assignment_turned_in_outlined,
+    ),
+    if (widget.session.analyst || widget.session.manager)
+      const _Section(
+        'financial-analysis',
+        'Análise financeira',
+        Icons.analytics_outlined,
+      ),
+    if (widget.session.analyst || widget.session.manager)
+      const _Section('credit-approval', 'Aprovar crédito', Icons.check),
+    if (widget.session.manager)
+      const _Section(
+        'credit-authorization',
+        'Autorizar crédito',
+        Icons.assignment_turned_in_outlined,
+      ),
+    if (widget.session.manager)
+      const _Section(
+        'credit-disbursement',
+        'Desembolso',
+        Icons.payments_outlined,
+      ),
+    const _Section(
+      'credit-status',
+      'Estado do crédito',
+      Icons.analytics_outlined,
+    ),
+    const _Section(
+      'credit-restructuring',
+      'Reestruturação de crédito',
+      Icons.swap_horiz_outlined,
+    ),
     const _Section('loans', 'Carteira', Icons.account_balance_outlined),
     const _Section('contracts', 'Contratos', Icons.description_outlined),
     const _Section('payments', 'Pagamentos', Icons.payments_outlined),
@@ -299,6 +481,8 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         'Transferências',
         Icons.swap_horiz_outlined,
       ),
+      const _Section('branches', 'Agências', Icons.business_outlined),
+      const _Section('roles', 'Perfis', Icons.shield),
       const _Section(
         'organization-settings',
         'Organização',
@@ -324,8 +508,11 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   int offset = 0, generation = 0;
   List<Json> rows = [];
   Json metrics = {};
+  List<Json> notifications = [];
   List<PendingWrite> pending = [];
-  bool loading = true, busy = false, foreground = true;
+  String? organizationName;
+  bool loading = true, refreshing = false, busy = false, foreground = true;
+  SubscriptionStatus? subscription;
   String? error;
   DateTime? updated;
   Timer? timer;
@@ -336,15 +523,69 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    institutionSettings = InstitutionSettingsController(
+      scope:
+          '${widget.session.profile?['organization_id'] ?? widget.session.profile?['id'] ?? 'demo'}',
+      actor: '${widget.session.profile?['name'] ?? 'Gestor'}',
+      repository: api,
+    );
+    institutionSettings.load().then((_) {
+      if (mounted && institutionSettings.error == null)
+        applyInstitutionSettings(institutionSettings.saved);
+    });
+    _resolveOrganizationName();
+    _loadSubscription();
     load();
-    // Refresh is triggered on foreground and by the navbar action. A periodic
-    // timer would keep Flutter's settle loop alive indefinitely in widget tests.
+    if (!_isWidgetTest) _schedulePendingRefresh();
+  }
+
+  Future<void> _loadSubscription() async {
+    final value = await SubscriptionService(
+      api,
+    ).status(organizationId: _organizationId);
+    if (!mounted) return;
+    setState(() {
+      subscription = value;
+      if (!value.active) route = 'dashboard';
+    });
+  }
+
+  String _subscriptionSubtitle() {
+    final value = subscription;
+    if (value == null) return 'A carregar plano...';
+    if (!value.active) return 'Trial expirado';
+    if (value.trial) {
+      final days = value.trialDaysLeft;
+      return 'Plano atual: Trial · $days ${days == 1 ? 'dia' : 'dias'}';
+    }
+    final plan = switch (value.plan?.toLowerCase()) {
+      'quarterly' => 'Trimestral',
+      'semiannual' => 'Semestral',
+      'annual' => 'Anual',
+      'lifetime' => 'Vitalício',
+      final label? when label.isNotEmpty => value.plan!,
+      _ => 'Activo',
+    };
+    return 'Plano atual: $plan';
+  }
+
+  String? _subscriptionPackage() {
+    final value = subscription;
+    if (value == null || !value.active || value.trial) return null;
+    return value.package ?? 'basic';
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     foreground = state == AppLifecycleState.resumed;
-    if (foreground && !loading && !busy) load();
+    if (foreground) {
+      _refreshPending();
+      _refreshNotifications();
+      if (!loading && !busy) load();
+      if (!_isWidgetTest) _schedulePendingRefresh();
+    } else {
+      timer?.cancel();
+    }
   }
 
   @override
@@ -352,21 +593,156 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     generation++;
     timer?.cancel();
     search.dispose();
+    institutionSettings.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
+  void _schedulePendingRefresh() {
+    timer?.cancel();
+    if (!mounted || !foreground || route == 'plans') return;
+    timer = Timer(_pendingRefreshInterval, () async {
+      await Future.wait([_refreshPending(), _refreshNotifications()]);
+      if (mounted && foreground) _schedulePendingRefresh();
+    });
+  }
+
+  Future<void> _refreshPending() async {
+    if (!mounted || !foreground || route == 'plans') return;
+    try {
+      final value = await api.pending();
+      if (!mounted) return;
+      final changed =
+          value.length != pending.length ||
+          value.asMap().entries.any(
+            (entry) =>
+                entry.key >= pending.length ||
+                entry.value.key != pending[entry.key].key,
+          );
+      if (changed) setState(() => pending = value);
+    } catch (_) {
+      // Badge refresh is best-effort and must never interrupt the active view.
+    }
+  }
+
+  Future<void> _refreshNotifications() async {
+    if (!mounted || !foreground || route == 'plans') return;
+    try {
+      final value = await api.get('/notifications?limit=100&offset=0') as List;
+      final loaded = value
+          .map((row) => Map<String, dynamic>.from(row as Map))
+          .toList();
+      if (!mounted) return;
+      final changed =
+          loaded.length != notifications.length ||
+          loaded.asMap().entries.any(
+            (entry) =>
+                entry.key >= notifications.length ||
+                entry.value['id'] != notifications[entry.key]['id'] ||
+                entry.value['read_at'] != notifications[entry.key]['read_at'],
+          );
+      if (changed) setState(() => notifications = loaded);
+    } catch (_) {
+      // Notification badge refresh is best-effort, like pending operations.
+    }
+  }
+
+  String get _profileOrganizationName {
+    final profile = widget.session.profile ?? const <String, dynamic>{};
+    for (final key in ['organization_name', 'organizationName']) {
+      final value = '${profile[key] ?? ''}'.trim();
+      if (value.isNotEmpty) return value;
+    }
+    final resolved = organizationName?.trim() ?? '';
+    return resolved.isEmpty ? 'Organização actual' : resolved;
+  }
+
+  String get _organizationId {
+    final profile = widget.session.profile ?? const <String, dynamic>{};
+    return '${profile['organization_id'] ?? profile['organizationId'] ?? ''}'
+        .trim();
+  }
+
+  Future<void> _resolveOrganizationName() async {
+    final profile = widget.session.profile ?? const <String, dynamic>{};
+    final embedded =
+        '${profile['organization_name'] ?? profile['organizationName'] ?? ''}'
+            .trim();
+    if (embedded.isNotEmpty) {
+      if (mounted) setState(() => organizationName = embedded);
+      return;
+    }
+    final currentId =
+        '${profile['organization_id'] ?? profile['organizationId'] ?? ''}'
+            .trim();
+    if (currentId.isEmpty || profile['guest'] == true) return;
+    try {
+      final raw = await api.get('/organizations/mine') as List;
+      final current = raw.whereType<Map>().cast<Map>().firstWhere(
+        (row) => '${row['id']}' == currentId,
+        orElse: () => const {},
+      );
+      final name = '${current['name'] ?? ''}'.trim();
+      if (mounted && name.isNotEmpty) setState(() => organizationName = name);
+    } catch (_) {
+      // The profile menu falls back to a neutral label, never to an ID.
+    }
+  }
+
   Future<void> load() async {
     final current = ++generation, target = route;
+    if (target == 'plans') {
+      if (mounted && (loading || refreshing)) {
+        setState(() {
+          loading = false;
+          refreshing = false;
+          error = null;
+        });
+      }
+      return;
+    }
+    final initialLoad = rows.isEmpty && metrics.isEmpty && pending.isEmpty;
     setState(() {
-      loading = true;
+      loading = initialLoad;
+      refreshing = !initialLoad;
       error = null;
     });
+    if (_creditStageRoutes.contains(target) ||
+        _financeAreas.containsKey(target) ||
+        target == 'audit' ||
+        target == 'products' ||
+        target.startsWith('report-') ||
+        target.startsWith('admin-') ||
+        [
+          'credit-portfolio',
+          'loans',
+          'contracts',
+          'portfolio',
+          'collections',
+        ].contains(target) ||
+        target == 'settings' ||
+        target == 'general-settings' ||
+        target == 'organization-settings') {
+      await _refreshPending();
+      if (mounted && current == generation) {
+        setState(() {
+          loading = false;
+          refreshing = false;
+        });
+      }
+      return;
+    }
     try {
       await widget.session.verify();
       if (!mounted || current != generation) return;
+      final notificationsFuture = api
+          .get('/notifications?limit=3&offset=0')
+          .catchError((_) => <Json>[]);
+      final pendingFuture = api.pending().catchError(
+        (_) => List<PendingWrite>.from(pending),
+      );
       final value = target == 'pending'
-          ? await api.pending()
+          ? await pendingFuture
           : await api.get(
               target == 'dashboard' || target == 'simulator'
                   ? '/dashboard'
@@ -376,8 +752,14 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                   ? '/organization-settings?limit=50&offset=$offset&q=${Uri.encodeQueryComponent(search.text.trim())}'
                   : '/$target?limit=50&offset=$offset&q=${Uri.encodeQueryComponent(search.text.trim())}',
             );
+      final notificationValue = await notificationsFuture;
+      final pendingValue = await pendingFuture;
       if (!mounted || current != generation) return;
       setState(() {
+        notifications = (notificationValue as List)
+            .map((row) => Map<String, dynamic>.from(row as Map))
+            .toList();
+        pending = pendingValue;
         if (target == 'pending') {
           pending = value as List<PendingWrite>;
         } else if (target == 'dashboard' ||
@@ -394,21 +776,45 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     } catch (e) {
       if (mounted && current == generation) setState(() => error = '$e');
     } finally {
-      if (mounted && current == generation) setState(() => loading = false);
+      if (mounted && current == generation) {
+        setState(() {
+          loading = false;
+          refreshing = false;
+        });
+      }
     }
   }
 
-  void select(String next) {
+  Future<void> select(String next) async {
     if (busy) return;
+    if (subscription?.active == false && next != 'plans') next = 'dashboard';
+    if ((route == 'settings' || route == 'organization-settings') &&
+        next != route) {
+      final state = institutionSettingsKey.currentState;
+      if (state != null && !await state.requestLeave()) return;
+      if (!mounted) return;
+    }
     setState(() {
       route = next;
       offset = 0;
       rows = [];
       metrics = {};
-      pending = [];
       updated = null;
       search.clear();
     });
+    if (next == 'plans') {
+      timer?.cancel();
+      if (mounted) {
+        setState(() {
+          loading = false;
+          refreshing = false;
+          error = null;
+        });
+      }
+      return;
+    } else if (!_isWidgetTest) {
+      _schedulePendingRefresh();
+    }
     load();
   }
 
@@ -418,62 +824,84 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     try {
       await api.write(method, path, body);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Operação confirmada no servidor.')),
+        await _feedback(
+          'Operação confirmada no servidor.',
+          title: 'Operação confirmada',
+          success: true,
         );
       }
     } on ApiFailure catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(e.message),
-            duration: const Duration(seconds: 8),
-          ),
+        await _feedback(
+          e.message,
+          title: 'Operação não confirmada',
+          success: false,
         );
       }
-    } catch (_) {
+    } catch (failure) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Não foi possível confirmar. Consulte Pendências antes de repetir.',
-            ),
-          ),
+        await _feedback(
+          userMessage(failure),
+          title: 'Operação não confirmada',
+          success: false,
         );
       }
     } finally {
       if (mounted) {
         setState(() => busy = false);
+        await _refreshPending();
         await load();
       }
     }
   }
 
   Future<void> _closeAccountingPeriod() async {
-    final controller = TextEditingController();
+    var selectedMonth = DateTime(DateTime.now().year, DateTime.now().month);
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Encerrar período contabilístico'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(labelText: 'Mês (AAAA-MM)'),
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Encerrar período contabilístico'),
+          content: ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Período contabilístico'),
+            subtitle: Text(
+              '${selectedMonth.month.toString().padLeft(2, '0')}/${selectedMonth.year}',
+            ),
+            trailing: const Icon(Icons.calendar_today_outlined),
+            onTap: () async {
+              final picked = await showDatePicker(
+                context: dialogContext,
+                initialDate: selectedMonth,
+                firstDate: DateTime(2000),
+                lastDate: DateTime(DateTime.now().year + 10, 12, 31),
+                helpText: 'Seleccione o período contabilístico',
+                cancelText: 'Cancelar',
+                confirmText: 'Seleccionar',
+              );
+              if (picked != null) {
+                setDialogState(
+                  () => selectedMonth = DateTime(picked.year, picked.month),
+                );
+              }
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Encerrar'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Encerrar'),
-          ),
-        ],
       ),
     );
-    final month = controller.text.trim();
-    controller.dispose();
-    if (confirmed != true || month.isEmpty) return;
+    if (confirmed != true) return;
+    final month =
+        '${selectedMonth.year}-${selectedMonth.month.toString().padLeft(2, '0')}';
     await mutate('POST', '/accounting-periods/$month/close', {});
   }
 
@@ -503,7 +931,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         Field('name', 'Nome'),
         Field('document', 'Documento'),
         Field('phone', 'Telefone'),
-        Field('gender', 'Género', optional: true),
+        Field('gender', 'Género', options: _genderOptions),
         Field('birthDate', 'Data de nascimento', kind: 'date', optional: true),
         Field('relationship', 'Relação'),
       ],
@@ -557,7 +985,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         Field('name', 'Nome'),
         Field('document', 'Documento'),
         Field('phone', 'Telefone'),
-        Field('gender', 'Género', optional: true),
+        Field('gender', 'Género', options: _genderOptions),
         Field('birthDate', 'Data de nascimento', kind: 'date', optional: true),
         Field('relationship', 'Relação'),
       ],
@@ -615,6 +1043,21 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
           initial: 'operator',
         ),
       ],
+      'branches' => const [
+        Field('code', 'Código'),
+        Field('name', 'Nome'),
+        Field('address', 'Endereço', optional: true),
+        Field('location', 'Localização', optional: true),
+      ],
+      'roles' => const [
+        Field('code', 'Código'),
+        Field('name', 'Nome'),
+        Field(
+          'permissions',
+          'Permissões separadas por vírgula',
+          optional: true,
+        ),
+      ],
       _ => <Field>[],
     };
     final data = await form(
@@ -630,10 +1073,21 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       fields,
     );
     if (data != null && mounted) {
+      final payload = route == 'roles'
+          ? {
+              ...data,
+              'permissions': '${data['permissions'] ?? ''}'
+                  .split(',')
+                  .map((value) => value.trim().toUpperCase())
+                  .where((value) => value.isNotEmpty)
+                  .toSet()
+                  .toList(),
+            }
+          : data;
       await mutate(
         route == 'users' ? 'POST' : 'POST',
         route == 'users' ? '/organizations/members/invite' : '/$route',
-        data,
+        payload,
       );
     }
   }
@@ -691,12 +1145,13 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         }
       }
       setState(() => busy = true);
+      final clients = <Json>[];
       for (final values in records.skip(1)) {
         final row = {
           for (var i = 0; i < header.length && i < values.length; i++)
             header[i]: values[i].trim(),
         };
-        await api.write('POST', '/clients', {
+        clients.add({
           'name': row['nome'] ?? '',
           'phone': row['telemovel'] ?? '',
           'document': row['documento'] ?? '',
@@ -705,17 +1160,27 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
           'clientType': 'individual',
         });
       }
+      final result = Map<String, dynamic>.from(
+        await api.write('POST', '/clients/import', {'clients': clients}) as Map,
+      );
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('CSV importado no servidor.')),
+        await _feedback(
+          'Total: ${result['total'] ?? clients.length}\n'
+          'Importados: ${result['imported'] ?? 0}\n'
+          'Duplicados: ${result['duplicates'] ?? 0}\n'
+          'Inválidos/falhas: ${result['invalid'] ?? 0}',
+          title: 'Importação concluída',
+          success: true,
         );
       }
       await load();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('$e')));
+        await _feedback(
+          '$e',
+          title: 'Importação não concluída',
+          success: false,
+        );
       }
     } finally {
       input.dispose();
@@ -740,28 +1205,20 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     ),
     Field('phone', 'Telefone', initial: row?['phone']?.toString() ?? ''),
     Field(
-      'documentType',
-      'Tipo de documento',
-      optional: true,
-      initial: row?['document_type']?.toString() ?? '',
-    ),
-    Field(
-      'documentExpiry',
-      'Validade do documento',
-      kind: 'date',
-      optional: true,
-      initial: row?['document_expiry']?.toString() ?? '',
-    ),
-    Field(
       'document',
       'Número do documento',
       initial: row?['document']?.toString() ?? '',
     ),
     Field(
-      'issuePlace',
-      'Local de emissão',
-      optional: true,
-      initial: row?['issue_place']?.toString() ?? '',
+      'activity',
+      'Actividade profissional',
+      initial: row?['activity']?.toString() ?? '',
+    ),
+    Field(
+      'location',
+      'Localização',
+      initial:
+          row?['location']?.toString() ?? row?['address']?.toString() ?? '',
     ),
     Field(
       'birthDate',
@@ -771,107 +1228,47 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       initial: row?['birth_date']?.toString() ?? '',
     ),
     Field(
-      'nationality',
-      'Nacionalidade',
-      optional: true,
-      initial: row?['nationality']?.toString() ?? '',
-    ),
-    Field(
-      'street',
-      'Rua',
-      optional: true,
-      initial: row?['street']?.toString() ?? '',
-    ),
-    Field(
-      'neighborhood',
-      'Bairro',
-      optional: true,
-      initial: row?['neighborhood']?.toString() ?? '',
-    ),
-    Field(
-      'houseNumber',
-      'Número da casa',
-      optional: true,
-      initial: row?['house_number']?.toString() ?? '',
-    ),
-    Field(
-      'quarter',
-      'Quarteirão',
-      optional: true,
-      initial: row?['quarter']?.toString() ?? '',
-    ),
-    Field(
-      'city',
-      'Cidade',
-      optional: true,
-      initial: row?['city']?.toString() ?? '',
-    ),
-    Field(
       'maritalStatus',
       'Estado civil',
       optional: true,
       initial: row?['marital_status']?.toString() ?? '',
     ),
     Field(
-      'politicallyExposed',
-      'Politicamente exposto?',
-      optional: true,
-      initial: row?['politically_exposed']?.toString() ?? '',
-    ),
-    Field(
-      'registrationDate',
-      'Data de cadastro',
-      kind: 'date',
-      optional: true,
-      initial: row?['registration_date']?.toString() ?? '',
-    ),
-    Field(
       'gender',
       'Género',
-      optional: true,
+      options: _genderOptions,
       initial: row?['gender']?.toString() ?? '',
     ),
     Field(
-      'status',
-      'Situação',
+      'address',
+      'Endereço',
       optional: true,
-      initial: row?['status']?.toString() ?? '',
+      initial: row?['address']?.toString() ?? '',
     ),
     Field(
-      'notify',
-      'Notificar?',
+      'monthlyIncomeCents',
+      'Rendimento mensal (MT)',
+      kind: 'money',
       optional: true,
-      initial: row?['notify']?.toString() ?? '',
+      initial: row?['monthly_income_cents'] == null
+          ? ''
+          : '${(int.tryParse('${row?['monthly_income_cents']}') ?? 0) / 100}',
     ),
     Field(
-      'receiveNotifications',
-      'Receber notificações?',
+      'monthlyExpensesCents',
+      'Despesas mensais (MT)',
+      kind: 'money',
       optional: true,
-      initial: row?['receive_notifications']?.toString() ?? '',
+      initial: row?['monthly_expenses_cents'] == null
+          ? ''
+          : '${(int.tryParse('${row?['monthly_expenses_cents']}') ?? 0) / 100}',
     ),
     Field(
-      'photo',
-      'Foto do cliente',
+      'dependents',
+      'Dependentes',
+      kind: 'nonNegativeInt',
       optional: true,
-      initial: row?['photo']?.toString() ?? '',
-    ),
-    Field(
-      'location',
-      'Localização GPS',
-      optional: true,
-      initial: row?['location']?.toString() ?? '',
-    ),
-    Field(
-      'observations',
-      'Observações',
-      optional: true,
-      initial: row?['observations']?.toString() ?? '',
-    ),
-    Field(
-      'manager',
-      'Gestor',
-      optional: true,
-      initial: row?['manager']?.toString() ?? '',
+      initial: row?['dependents']?.toString() ?? '',
     ),
   ];
   List<Field> _paymentFields([String? loanId]) => [
@@ -999,6 +1396,12 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       Field('name', 'Nome', initial: '${row['name'] ?? ''}'),
       Field('document', 'Documento', initial: '${row['document'] ?? ''}'),
       Field('phone', 'Telefone', initial: '${row['phone'] ?? ''}'),
+      Field(
+        'gender',
+        'Género',
+        options: _genderOptions,
+        initial: '${row['gender'] ?? ''}',
+      ),
       Field('relationship', 'Relação', initial: '${row['relationship'] ?? ''}'),
     ]);
     if (body != null && mounted) {
@@ -1011,7 +1414,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
 
   Future<void> kyc(Json row) async {
     final body = await form(context, api, 'Rever identificação', const [
-      Field('expiresAt', 'Validade do documento (AAAA-MM-DD)', kind: 'date'),
+      Field('expiresAt', 'Validade do documento', kind: 'date'),
     ]);
     if (body != null && mounted) {
       await mutate('POST', '/clients/${row['id']}/kyc', body);
@@ -1107,9 +1510,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('$e')));
+        await _feedback('$e', title: 'Operação não concluída', success: false);
       }
     }
   }
@@ -1117,6 +1518,9 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   String display(String key, dynamic value) {
     if (value == null) return '—';
     if (key.endsWith('_cents')) return money(value);
+    if (const {'phone', 'telephone', 'contact', 'mobile'}.contains(key)) {
+      return formatPhone(value);
+    }
     if (key == 'annual_rate_bps') return '${intValue(value) / 100}%';
     if (value is bool) return value ? 'Sim' : 'Não';
     if (key == 'stage') return _stages[value] ?? '$value';
@@ -1170,130 +1574,31 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   }) => showDialog<void>(
     context: context,
     builder: (dialogContext) {
-      final scheme = Theme.of(dialogContext).colorScheme;
-      final scalarEntries = row.entries
-          .where((entry) => entry.value is! Map && entry.value is! List)
-          .where((entry) => entry.key != 'id')
-          .toList();
-      return Dialog(
-        insetPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        clipBehavior: Clip.antiAlias,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 920, maxHeight: 720),
-          child: Column(
-            children: [
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.fromLTRB(24, 20, 16, 20),
-                color: scheme.surfaceContainerHighest,
-                child: Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 22,
-                      backgroundColor: scheme.primary.withValues(alpha: .12),
-                      child: Icon(
-                        row['legal_name'] != null
-                            ? Icons.business_outlined
-                            : Icons.person,
-                        color: scheme.primary,
-                      ),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            title,
-                            style: Theme.of(dialogContext).textTheme.titleLarge
-                                ?.copyWith(fontWeight: FontWeight.w700),
-                          ),
-                          Text(
-                            '${row['name'] ?? row['legal_name'] ?? row['trading_name'] ?? 'Registo'}',
-                            style: Theme.of(dialogContext).textTheme.bodyMedium
-                                ?.copyWith(color: scheme.onSurfaceVariant),
-                          ),
-                        ],
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: 'Fechar',
-                      onPressed: () => Navigator.pop(dialogContext),
-                      icon: const Icon(Icons.close),
-                    ),
-                  ],
-                ),
+      return PremiumDialog(
+        title: Text(title),
+        subtitle:
+            '${row['name'] ?? row['legal_name'] ?? row['trading_name'] ?? 'Registo'} · ${row['id'] ?? ''}',
+        icon: row['legal_name'] != null
+            ? Icons.business_outlined
+            : Icons.person,
+        width: 900,
+        content: DetailFields(
+          fields: [
+            for (final entry in row.entries.where(
+              (e) => e.value is! Map && e.value is! List && e.key != 'id',
+            ))
+              (
+                _labels[entry.key] ?? entry.key,
+                display(entry.key, entry.value),
               ),
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(24),
-                  child: Table(
-                    columnWidths: const {
-                      0: FlexColumnWidth(1.1),
-                      1: FlexColumnWidth(2),
-                    },
-                    border: TableBorder(
-                      horizontalInside: BorderSide(color: Colors.transparent),
-                    ),
-                    children: [
-                      for (var index = 0; index < scalarEntries.length; index++)
-                        TableRow(
-                          decoration: BoxDecoration(
-                            color: index.isEven
-                                ? scheme.surfaceContainerLow
-                                : scheme.surface,
-                          ),
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 13,
-                              ),
-                              child: Text(
-                                _labels[scalarEntries[index].key] ??
-                                    scalarEntries[index].key,
-                                style: TextStyle(
-                                  color: scheme.onSurfaceVariant,
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 13,
-                              ),
-                              child: SelectableText(
-                                display(
-                                  scalarEntries[index].key,
-                                  scalarEntries[index].value,
-                                ),
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
-                child: Align(
-                  alignment: Alignment.centerRight,
-                  child: FilledButton(
-                    onPressed: () => Navigator.pop(dialogContext),
-                    child: const Text('Fechar'),
-                  ),
-                ),
-              ),
-            ],
-          ),
+          ],
         ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Concluir'),
+          ),
+        ],
       );
     },
   );
@@ -1302,19 +1607,15 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     try {
       await api.retry(operation);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Resultado confirmado. Actualize a carteira para consultar o saldo.',
-            ),
-          ),
+        await _feedback(
+          'Resultado confirmado. Actualize a carteira para consultar o saldo.',
+          title: 'Resultado confirmado',
+          success: true,
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('$e')));
+        await _feedback('$e', title: 'Operação não concluída', success: false);
       }
     } finally {
       if (mounted) {
@@ -1354,21 +1655,21 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     try {
       final status = await api.cancel(operation);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              status == 'confirmed'
-                  ? 'A operação já foi concluída. Consulte os dados actualizados.'
-                  : 'Cancelamento confirmado. A operação não será executada.',
-            ),
-          ),
+        await _feedback(
+          status == 'confirmed'
+              ? 'A operação já foi concluída. Consulte os dados actualizados.'
+              : 'Cancelamento confirmado. A operação não será executada.',
+          title: 'Operação cancelada',
+          success: true,
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('$e')));
+        await _feedback(
+          '$e',
+          title: 'Cancelamento não concluído',
+          success: false,
+        );
       }
     } finally {
       if (mounted) {
@@ -1406,12 +1707,27 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
             'sync-operations',
             'backup-archives',
             'retention-policies',
+            'branches',
+            'roles',
           ].contains(route));
 
   Widget _dashboardBody() {
-    final activeClients = '${metrics['clients'] ?? 248}';
-    final pendingRequests = '${metrics['pending_requests'] ?? 18}';
-    final outstanding = money(metrics['outstanding_cents'] ?? 186450000);
+    int metric(String key) => int.tryParse('${metrics[key] ?? 0}') ?? 0;
+    final activeClients = '${metric('clients')}';
+    final activeLoans = metric('active_loans');
+    final pendingRequests = '${metric('pending_requests')}';
+    final outstanding = money(metrics['outstanding_cents']);
+    final overdue = metric('overdue_cents');
+    final disbursed = metric('disbursed_this_month_cents');
+    final collected = metric('collected_this_month_cents');
+    final trends = _dashboardTrends();
+    final disbursedTrend = [
+      for (final row in trends) intValue(row['disbursed_cents']),
+    ];
+    final collectedTrend = [
+      for (final row in trends) intValue(row['collected_cents']),
+    ];
+    final requestTrend = [for (final row in trends) intValue(row['requests'])];
     return LayoutBuilder(
       builder: (context, viewport) {
         final scheme = Theme.of(context).colorScheme;
@@ -1458,46 +1774,47 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
               crossAxisSpacing: 22,
               mainAxisSpacing: 22,
               childAspectRatio: viewport.maxWidth < 540 ? 2.2 : 1.52,
+              mainAxisExtent: viewport.maxWidth < 540 ? 160 : 154,
               children: [
                 _remoteKpi(
                   'Créditos concedidos',
-                  '114.000,00 MZN',
-                  '20 este mês',
+                  money(disbursed),
+                  '$activeLoans créditos activos',
                   Icons.credit_card_outlined,
                   scheme.primary,
                 ),
                 _remoteKpi(
                   'Capital em atraso',
-                  '29.647,00 MZN',
-                  '7 contratos',
+                  money(overdue),
+                  'prestações vencidas',
                   Icons.warning_amber_rounded,
                   scheme.error,
                 ),
                 _remoteKpi(
                   'Juros em atraso',
-                  '6.457,00 MZN',
-                  '7 contratos',
+                  money(0),
+                  'não separado pela API',
                   Icons.error_outline_rounded,
                   scheme.error,
                 ),
                 _remoteKpi(
                   'Clientes activos',
                   activeClients,
-                  '9 novos este mês',
+                  'clientes cadastrados',
                   Icons.people_alt_outlined,
                   scheme.secondary,
                 ),
                 _remoteKpi(
                   'Desembolso diário',
-                  '3.000,00 MZN',
-                  '1 operação',
+                  money(disbursed),
+                  'total do mês actual',
                   Icons.payments_outlined,
                   scheme.tertiary,
                 ),
                 _remoteKpi(
                   'Reembolso diário',
-                  '6.500,00 MZN',
-                  '2 operações',
+                  money(collected),
+                  'total do mês actual',
                   Icons.assignment_turned_in_outlined,
                   scheme.secondary,
                 ),
@@ -1512,7 +1829,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                   'Pedidos pendentes',
                   pendingRequests,
                   'aguardam decisão',
-                  Icons.description_outlined,
+                  Icons.assignment_turned_in_outlined,
                   scheme.tertiary,
                 ),
               ],
@@ -1523,26 +1840,50 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
             _dashboardPanels(viewport.maxWidth),
             const SizedBox(height: 20),
             _chartPanel(
-              'Despesas 2026',
-              'Despesas pendentes',
-              'Despesas pagas',
+              'Desembolsos e cobranças',
+              'Desembolsado',
+              'Cobrado',
               scheme.error,
               scheme.secondary,
-              [0, 0, 0, 0, 1800, 2400, 8600, 1200, 0, 0, 0, 0],
+              _interleaveDashboardSeries(disbursedTrend, collectedTrend),
             ),
             const SizedBox(height: 20),
             _chartPanel(
-              'Empréstimos pagos / pendentes 2026',
-              'Empréstimos pagos',
-              'Empréstimos pendentes',
+              'Pedidos de crédito',
+              'Pedidos criados',
+              'Referência',
               scheme.secondary,
               scheme.error,
-              [0, 0, 0, 0, 100, 315, 265, 305, 60, 0, 0, 0],
+              _interleaveDashboardSeries(
+                requestTrend,
+                List<num>.filled(requestTrend.length, 0),
+              ),
             ),
           ],
         );
       },
     );
+  }
+
+  List<Json> _dashboardTrends() {
+    final raw = metrics['trends'];
+    if (raw is! Map) return const [];
+    final rows = raw['12'] ?? raw['6'] ?? raw['3'];
+    if (rows is! List) return const [];
+    return rows
+        .whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList();
+  }
+
+  List<num> _interleaveDashboardSeries(List<num> first, List<num> second) {
+    final values = <num>[];
+    final length = math.max(first.length, second.length);
+    for (var index = 0; index < length; index++) {
+      values.add(index < first.length ? first[index] : 0);
+      values.add(index < second.length ? second[index] : 0);
+    }
+    return values;
   }
 
   Widget _periodChip() {
@@ -1554,42 +1895,69 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: scheme.outlineVariant),
       ),
-      child: const Row(
+      child: Row(
         children: [
-          Icon(Icons.calendar_today_outlined, size: 16),
-          SizedBox(width: 8),
+          const Icon(Icons.calendar_today_outlined, size: 16),
+          const SizedBox(width: 8),
           Text(
-            'Setembro 2026',
-            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+            _dashboardPeriodLabel(),
+            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
           ),
         ],
       ),
     );
   }
 
+  String _dashboardPeriodLabel() {
+    final date = DateTime.tryParse('${metrics['as_of'] ?? ''}')?.toLocal();
+    if (date == null) return 'Dados actuais';
+    const months = [
+      'Janeiro',
+      'Fevereiro',
+      'Março',
+      'Abril',
+      'Maio',
+      'Junho',
+      'Julho',
+      'Agosto',
+      'Setembro',
+      'Outubro',
+      'Novembro',
+      'Dezembro',
+    ];
+    return '${months[date.month - 1]} ${date.year}';
+  }
+
   Widget _dashboardSplit(double width) {
     final scheme = Theme.of(context).colorScheme;
-    return GridView.count(
-      crossAxisCount: width >= 900 ? 2 : 1,
-      crossAxisSpacing: 18,
-      mainAxisSpacing: 18,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      childAspectRatio: width >= 900 ? 1.65 : 1.8,
+    final pending = SizedBox(
+      height: 360,
+      child: _projectionCard('Projecção pendente', scheme.error, [
+        ('Capital a ser devolvido', '296.840,00 MZN', .77),
+        ('Juros a ser devolvido', '87.152,00 MZN', .23),
+        ('Mora a ser paga', '0,00 MZN', .04),
+        ('Total a ser pago', '383.992,00 MZN', 1),
+      ]),
+    );
+    final paid = SizedBox(
+      height: 360,
+      child: _projectionCard('Projecção paga', scheme.secondary, [
+        ('Capital pago', '33.101,40 MZN', .52),
+        ('Juros pago', '26.764,95 MZN', .42),
+        ('Mora paga', '3.959,65 MZN', .06),
+        ('Multa paga', '0,00 MZN', .01),
+        ('Total pago', '63.826,00 MZN', 1),
+      ]),
+    );
+    if (width < 900) {
+      return Column(children: [pending, const SizedBox(height: 18), paid]);
+    }
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _projectionCard('Projecção pendente', scheme.error, [
-          ('Capital a ser devolvido', '296.840,00 MZN'),
-          ('Juros a ser devolvido', '87.152,00 MZN'),
-          ('Mora a ser paga', '0,00 MZN'),
-          ('Total a ser pago', '383.992,00 MZN'),
-        ]),
-        _projectionCard('Projecção paga', scheme.secondary, [
-          ('Capital pago', '33.101,40 MZN'),
-          ('Juros pago', '26.764,95 MZN'),
-          ('Mora paga', '3.959,65 MZN'),
-          ('Multa paga', '0,00 MZN'),
-          ('Total pago', '63.826,00 MZN'),
-        ]),
+        Expanded(child: pending),
+        const SizedBox(width: 18),
+        Expanded(child: paid),
       ],
     );
   }
@@ -1597,24 +1965,57 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   Widget _projectionCard(
     String title,
     Color color,
-    List<(String, String)> values,
+    List<(String, String, double)> values,
   ) => _surface(
     Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          title.toUpperCase(),
-          style: TextStyle(
-            color: color,
-            fontSize: 13,
-            fontWeight: FontWeight.w800,
-            letterSpacing: .4,
-          ),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                title.toUpperCase(),
+                style: TextStyle(
+                  color: color,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: .5,
+                ),
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: .10),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    title.contains('paga')
+                        ? Icons.check_circle_outline
+                        : Icons.history,
+                    size: 13,
+                    color: color,
+                  ),
+                  const SizedBox(width: 5),
+                  Text(
+                    title.contains('paga') ? 'Liquidado' : 'Em aberto',
+                    style: TextStyle(
+                      color: color,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 10),
         for (final value in values)
           Padding(
-            padding: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.only(bottom: 10),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -1643,10 +2044,10 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                 ClipRRect(
                   borderRadius: BorderRadius.circular(9),
                   child: LinearProgressIndicator(
-                    value: .72,
-                    minHeight: 7,
+                    value: value.$3,
+                    minHeight: value.$1.startsWith('Total') ? 8 : 6,
                     backgroundColor: color.withValues(alpha: .10),
-                    color: color,
+                    valueColor: AlwaysStoppedAnimation(color),
                   ),
                 ),
               ],
@@ -1658,41 +2059,53 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
 
   Widget _dashboardPanels(double width) {
     final scheme = Theme.of(context).colorScheme;
-    return GridView.count(
-      crossAxisCount: width >= 1050
-          ? 3
-          : width >= 650
-          ? 2
-          : 1,
-      crossAxisSpacing: 18,
-      mainAxisSpacing: 18,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      childAspectRatio: width >= 1050 ? 1.05 : 0.9,
+    final cardWidth = width >= 1150
+        ? 350.0
+        : width >= 730
+        ? 350.0
+        : width;
+    Widget fixed(Widget child) =>
+        SizedBox(width: cardWidth, height: 360, child: child);
+    return Wrap(
+      spacing: 18,
+      runSpacing: 18,
       children: [
-        _riskPanel(),
-        _listPanel('Reembolso mensal', [
-          ('Júlio Custódio', '900,00 MZN'),
-          ('Silvério João Muaquiqua', '3.250,00 MZN'),
-          ('Francisco Adelino Rui', '3.250,00 MZN'),
-          ('Agostinho Querino', '5.200,00 MZN'),
-        ], scheme.secondary),
-        _listPanel('Desembolso mensal', [
-          ('Pascoal João Muaquiquia', '3.000,00 MZN'),
-          ('Armando Manuel António', '5.000,00 MZN'),
-          ('Júlio Custódio', '2.500,00 MZN'),
-          ('Edson Mário Morais', '1.000,00 MZN'),
-        ], scheme.error),
-        _listPanel('Gestão de logs', [
-          ('Naveia Muaquiquia João', 'login'),
-          ('Naveia Muaquiquia João', 'logout'),
-          ('Loide Janeth Ligia', 'submissão'),
-          ('Loide Janeth Ligia', 'login'),
-        ], scheme.primary),
-        _distributionPanel('Distribuição das contas', Icons.bar_chart_rounded),
-        _distributionPanel(
-          'Distribuição dos clientes',
-          Icons.pie_chart_outline_rounded,
+        fixed(_riskPanel()),
+        fixed(
+          _listPanel('Reembolso mensal', [
+            ('Júlio Custódio', '900,00 MZN'),
+            ('Silvério João Muaquiqua', '3.250,00 MZN'),
+            ('Francisco Adelino Rui', '3.250,00 MZN'),
+            ('Agostinho Querino', '5.200,00 MZN'),
+          ], scheme.secondary),
+        ),
+        fixed(
+          _listPanel('Desembolso mensal', [
+            ('Pascoal João Muaquiquia', '3.000,00 MZN'),
+            ('Armando Manuel António', '5.000,00 MZN'),
+            ('Júlio Custódio', '2.500,00 MZN'),
+            ('Edson Mário Morais', '1.000,00 MZN'),
+          ], scheme.error),
+        ),
+        fixed(
+          _listPanel('Gestão de logs', [
+            ('Naveia Muaquiquia João', 'login'),
+            ('Naveia Muaquiquia João', 'logout'),
+            ('Loide Janeth Ligia', 'submissão'),
+            ('Loide Janeth Ligia', 'login'),
+          ], scheme.primary),
+        ),
+        fixed(
+          _distributionPanel(
+            'Distribuição das contas',
+            Icons.bar_chart_rounded,
+          ),
+        ),
+        fixed(
+          _distributionPanel(
+            'Distribuição dos clientes',
+            Icons.pie_chart_outline_rounded,
+          ),
         ),
       ],
     );
@@ -1713,6 +2126,21 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                 fontWeight: FontWeight.w800,
                 color: Theme.of(context).colorScheme.onSurface,
               ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Icon(Icons.shield, size: 14, color: scheme.tertiary),
+                const SizedBox(width: 6),
+                Text(
+                  '6 faixas monitorizadas',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: scheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 18),
             for (final item in [
@@ -1835,26 +2263,82 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
             color: Theme.of(context).colorScheme.onSurface,
           ),
         ),
-        const Spacer(),
-        Center(
-          child: Icon(
-            icon,
-            size: 76,
-            color: Theme.of(context).colorScheme.primary,
-          ),
-        ),
-        const Spacer(),
-        Center(
-          child: Text(
-            'Masculino 79,8%  ·  Feminino 17,2%',
-            style: TextStyle(
-              fontSize: 11,
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
+        const SizedBox(height: 12),
+        Expanded(
+          child: Row(
+            children: [
+              SizedBox(
+                width: 112,
+                height: 112,
+                child: CustomPaint(
+                  painter: _DashboardDonutPainter(
+                    Theme.of(context).colorScheme.primary,
+                    Theme.of(context).colorScheme.tertiary,
+                  ),
+                  child: Center(
+                    child: Icon(
+                      icon,
+                      size: 22,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _distributionLegend(
+                      'Masculino',
+                      '79,8%',
+                      Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(height: 12),
+                    _distributionLegend(
+                      'Feminino',
+                      '17,2%',
+                      Theme.of(context).colorScheme.tertiary,
+                    ),
+                    const SizedBox(height: 12),
+                    _distributionLegend(
+                      'Outro',
+                      '3,0%',
+                      Theme.of(context).colorScheme.outline,
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       ],
     ),
+  );
+
+  Widget _distributionLegend(String label, String value, Color color) => Row(
+    children: [
+      Container(
+        width: 8,
+        height: 8,
+        decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+      ),
+      const SizedBox(width: 8),
+      Expanded(
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ),
+      Text(
+        value,
+        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
+      ),
+    ],
   );
 
   Widget _chartPanel(
@@ -1997,7 +2481,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
               child: ColoredBox(color: accent),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(18, 18, 16, 18),
+              padding: const EdgeInsets.fromLTRB(16, 12, 14, 12),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -2005,8 +2489,8 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                   Row(
                     children: [
                       Container(
-                        width: 36,
-                        height: 36,
+                        width: 32,
+                        height: 32,
                         decoration: BoxDecoration(
                           color: accent.withValues(alpha: .12),
                           borderRadius: BorderRadius.circular(8),
@@ -2081,119 +2565,144 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       if (location == null) return;
       await XFile.fromData(bytes, mimeType: mimeType).saveTo(location.path);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Relatório guardado em ${location.path}')),
+        await _feedback(
+          'Relatório guardado em ${location.path}',
+          title: 'Relatório guardado',
+          success: true,
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Não foi possível gerar o relatório: $e')),
+        await _feedback(
+          'Não foi possível gerar o relatório: $e',
+          title: 'Relatório não gerado',
+          success: false,
         );
       }
     }
   }
 
-  Widget _settingsBody() {
-    final visuals = brandVisuals.value;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Definições',
-          style: Theme.of(
-            context,
-          ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          'Personalize o espaço de gestão da sua instituição.',
-          style: Theme.of(context).textTheme.bodyMedium,
-        ),
-        const SizedBox(height: 24),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _body() {
+    if (subscription?.active == false && route != 'plans') {
+      return _expiredTrialHome(subscription!);
+    }
+    final hasLoadedContent = switch (route) {
+      'dashboard' || 'simulator' || 'reports' => metrics.isNotEmpty,
+      'pending' => pending.isNotEmpty,
+      _ => rows.isNotEmpty,
+    };
+    if (loading && !hasLoadedContent && !_creditStageRoutes.contains(route)) {
+      return _loadingState(_loadingMessageForRoute(route));
+    }
+    if (route == 'risk-scores') {
+      if (error != null) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Não foi possível carregar a Central de risco.'),
+            const SizedBox(height: 12),
+            OutlinedButton(
+              onPressed: loading ? null : load,
+              child: const Text('Tentar novamente'),
+            ),
+          ],
+        );
+      }
+      if (loading && rows.isEmpty)
+        return const Center(child: Text('A carregar avaliações de risco…'));
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          RiskCenterView(rows: rows, repository: api, onRefresh: load),
+          if (offset > 0 || rows.length == 50)
+            Wrap(
+              spacing: 12,
               children: [
-                const Text(
-                  'Aparência',
-                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                OutlinedButton(
+                  onPressed: !loading && offset > 0
+                      ? () {
+                          offset -= 50;
+                          load();
+                        }
+                      : null,
+                  child: const Text('Registos anteriores'),
                 ),
-                const SizedBox(height: 16),
-                Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
-                  children: [
-                    for (final mode in [
-                      ThemeMode.system,
-                      ThemeMode.light,
-                      ThemeMode.dark,
-                    ])
-                      ChoiceChip(
-                        label: Text(
-                          mode == ThemeMode.system
-                              ? 'Sistema'
-                              : mode == ThemeMode.light
-                              ? 'Claro'
-                              : 'Escuro',
-                        ),
-                        selected: themeMode.value == mode,
-                        onSelected: (_) {
-                          themeMode.value = mode;
-                          widget.onTheme?.call(mode);
-                          setState(() {});
-                        },
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 20),
-                const Text(
-                  'Fonte do sistema ou fonte premium',
-                  style: TextStyle(fontWeight: FontWeight.w600),
-                ),
-                const SizedBox(height: 10),
-                DropdownButtonFormField<String>(
-                  initialValue: visuals.fontFamily,
-                  items: const [
-                    DropdownMenuItem(value: 'System', child: Text('Sistema')),
-                    DropdownMenuItem(value: 'Poppins', child: Text('Poppins')),
-                    DropdownMenuItem(value: 'Inter', child: Text('Inter')),
-                    DropdownMenuItem(value: 'Geist', child: Text('Geist')),
-                    DropdownMenuItem(value: 'Manrope', child: Text('Manrope')),
-                  ],
-                  onChanged: (v) {
-                    if (v != null) {
-                      brandVisuals.value = visuals.copyWith(fontFamily: v);
-                      setState(() {});
-                    }
-                  },
+                OutlinedButton(
+                  onPressed: !loading && rows.length == 50
+                      ? () {
+                          offset += 50;
+                          load();
+                        }
+                      : null,
+                  child: const Text('Próximos registos'),
                 ),
               ],
             ),
-          ),
-        ),
-        const SizedBox(height: 16),
-        Card(
-          child: ListTile(
-            leading: const Icon(Icons.image_outlined),
-            title: const Text('Logo e marca d’água'),
-            subtitle: Text(
-              visuals.logo == null
-                  ? 'Usando o logo SysCredi'
-                  : 'Logo institucional configurado',
-            ),
-            trailing: const Icon(Icons.chevron_right),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _body() {
-    if (route == 'settings' || route == 'organization-settings')
-      return _settingsBody();
+        ],
+      );
+    }
+    if (route == 'audit') return AuditLogsView(repository: api);
+    if (route == 'credit-portfolio' ||
+        route == 'loans' ||
+        route == 'contracts' ||
+        route == 'portfolio') {
+      return PortfolioView(repository: api);
+    }
+    if (route == 'collections') return CollectionsView(repository: api);
+    if (route == 'products') return CreditProductsView(repository: api);
+    if (_financeAreas.containsKey(route)) {
+      return FinanceView(area: _financeAreas[route]!, repository: api);
+    }
+    route = switch (route) {
+      'finance-balances' => 'accounts',
+      'finance-income' || 'finance-expenses' => 'cash-entries',
+      'finance-disbursements' => 'loans',
+      'finance-refunds' => 'payments',
+      'finance-overdue' => 'loans',
+      'finance-assets' => 'accounts',
+      _ => route,
+    };
+    if (route.startsWith('report-')) {
+      return ReportView(
+        kind: _reportKinds[route] ?? 'Créditos',
+        repository: api,
+      );
+    }
+    if (route.startsWith('admin-')) {
+      return AdminView(
+        kind: route.substring('admin-'.length),
+        repository: api,
+        canManage: widget.session.manager,
+      );
+    }
+    if (route == 'plans') {
+      return PlansView(
+        key: const ValueKey('syscredi-plans'),
+        repository: api,
+        organizationId: _organizationId,
+        onActivated: () async {
+          await _loadSubscription();
+          if (mounted) select('dashboard');
+        },
+      );
+    }
+    if (_creditStageRoutes.contains(route)) {
+      return CreditStagesView(
+        stage: route,
+        repository: api,
+        role: '${widget.session.profile?['role'] ?? 'operator'}',
+      );
+    }
+    if (route == 'settings' ||
+        route == 'general-settings' ||
+        route == 'organization-settings') {
+      return InstitutionSettingsView(
+        key: institutionSettingsKey,
+        controller: institutionSettings,
+        canAdminister: widget.session.manager,
+        general: route == 'general-settings',
+      );
+    }
     if ({
       'clients',
       'businesses',
@@ -2203,7 +2712,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       return _clientsBody();
     }
     if (route == 'dashboard') return _dashboardBody();
-    if (route == 'simulator') return const SimulatorPanel();
+    if (route == 'simulator') return SimulatorPanel(repository: api);
     if (route == 'simulator' || route == 'reports') {
       final cards = Wrap(
         spacing: 16,
@@ -2430,6 +2939,236 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     );
   }
 
+  Widget _expiredTrialHome(SubscriptionStatus status) {
+    final scheme = Theme.of(context).colorScheme;
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 760),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 36),
+          child: FluentSurface(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 76,
+                  height: 76,
+                  decoration: BoxDecoration(
+                    color: scheme.errorContainer,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.verified_outlined,
+                    color: scheme.onErrorContainer,
+                    size: 38,
+                  ),
+                ),
+                const SizedBox(height: 22),
+                const Text(
+                  'O período de avaliação terminou',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  'O plano padrão inclui 7 dias gratuitos. Para continuar a utilizar o Syscredi, escolha um plano e envie os identificadores do dispositivo e da organização ao proprietário.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 15,
+                    height: 1.45,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 26),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: scheme.surfaceContainerHighest.withValues(
+                      alpha: .46,
+                    ),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: Color.lerp(
+                        scheme.outlineVariant,
+                        scheme.primary,
+                        .2,
+                      )!,
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            width: 38,
+                            height: 38,
+                            decoration: BoxDecoration(
+                              color: scheme.primaryContainer,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Icon(
+                              Icons.verified_outlined,
+                              color: scheme.onPrimaryContainer,
+                              size: 20,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Identificadores para activação',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  'A licença é associada à organização e controla os dispositivos autorizados.',
+                                  style: TextStyle(
+                                    color: scheme.onSurfaceVariant,
+                                    fontSize: 13,
+                                    height: 1.35,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          OutlinedButton.icon(
+                            onPressed: () async {
+                              await Clipboard.setData(
+                                ClipboardData(
+                                  text:
+                                      'Dispositivo: ${status.deviceId}\nOrganização: $_organizationId',
+                                ),
+                              );
+                              if (!mounted) return;
+                              await _feedback(
+                                'Os identificadores foram copiados.',
+                                title: 'IDs copiados',
+                                success: true,
+                              );
+                            },
+                            icon: const Icon(Icons.document, size: 17),
+                            label: const Text('Copiar ambos'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 18),
+                      _ExpiredTrialIdentifier(
+                        icon: Icons.card_membership_outlined,
+                        label: 'ID do dispositivo',
+                        value: status.deviceId,
+                        onCopy: () async {
+                          await Clipboard.setData(
+                            ClipboardData(text: status.deviceId),
+                          );
+                          if (!mounted) return;
+                          await _feedback(
+                            'O ID do dispositivo foi copiado.',
+                            title: 'ID copiado',
+                            success: true,
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                      _ExpiredTrialIdentifier(
+                        icon: Icons.business_outlined,
+                        label: 'ID da organização',
+                        value: _organizationId,
+                        onCopy: () async {
+                          await Clipboard.setData(
+                            ClipboardData(text: _organizationId),
+                          );
+                          if (!mounted) return;
+                          await _feedback(
+                            'O ID da organização foi copiado.',
+                            title: 'ID copiado',
+                            success: true,
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 14),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            Icons.help_outline,
+                            size: 17,
+                            color: scheme.primary,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Envie estes IDs ao proprietário para gerar o código de activação. O limite de dispositivos depende do pacote Básico, Pro ou Premium.',
+                              style: TextStyle(
+                                color: scheme.onSurfaceVariant,
+                                fontSize: 13,
+                                height: 1.4,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: () => select('plans'),
+                    icon: const Icon(Icons.verified_outlined),
+                    label: const Text('Ver planos e activar'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _loadingState(String message) =>
+      CenteredLoadingState(message: message);
+
+  String _loadingMessageForRoute(String value) => switch (value) {
+    'clients' => 'A carregar clientes…',
+    'businesses' => 'A carregar empresas…',
+    'co-signers' => 'A carregar co-assinantes…',
+    'client-guarantors' => 'A carregar avalistas…',
+    'products' => 'A carregar produtos de crédito…',
+    'dashboard' => 'A carregar o painel…',
+    'payments' || 'collections' => 'A carregar pagamentos…',
+    'receipts' => 'A carregar recibos…',
+    'accounts' || 'finance-balances' => 'A carregar contas financeiras…',
+    'cash-entries' => 'A carregar movimentos de tesouraria…',
+    'journal' => 'A carregar lançamentos contabilísticos…',
+    'accounting-periods' => 'A carregar períodos contabilísticos…',
+    'reconciliations' => 'A carregar reconciliações…',
+    'account-transfers' => 'A carregar transferências…',
+    'aml-alerts' => 'A carregar alertas de compliance…',
+    'field-visits' => 'A carregar visitas de campo…',
+    'documents' => 'A carregar documentos…',
+    'risk-scores' => 'A carregar avaliações de risco…',
+    'audit' => 'A carregar eventos de auditoria…',
+    'reports' => 'A carregar relatórios…',
+    'pending' => 'A carregar operações pendentes…',
+    'notifications' => 'A carregar notificações…',
+    'branches' => 'A carregar agências…',
+    'roles' => 'A carregar perfis e permissões…',
+    'users' || 'admin-users' => 'A carregar utilizadores…',
+    _ => 'A carregar dados…',
+  };
+
   Widget _recordsTable() {
     final columns = <String>{};
     for (final row in rows) {
@@ -2555,7 +3294,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         await Clipboard.setData(
           ClipboardData(
             text:
-                'SysCredi — Recibo ${row['id']}\nPagamento: ${row['payment_id']}\nMontante: ${money(row['amount_cents'])}\nEmitido: ${row['created_at']}',
+                '$_institutionName — Recibo ${row['id']}\nPagamento: ${row['payment_id']}\nMontante: ${money(row['amount_cents'])}\nEmitido: ${row['created_at']}',
           ),
         );
     }
@@ -2590,6 +3329,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       });
       await widget.session.verify();
       if (mounted) {
+        await _resolveOrganizationName();
         setState(() {
           route = 'dashboard';
           rows = [];
@@ -2599,108 +3339,18 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       }
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('$error')));
+        await _feedback(
+          '$error',
+          title: 'Operação não concluída',
+          success: false,
+        );
       }
     }
   }
 
-  static final _mockIndividualClients = <Json>[
-    {
-      'id': 'mock-client-001',
-      'name': 'Edson Mário Morais',
-      'phone': '878 935 415',
-      'document': '110105200085-C',
-      'activity': 'Comércio a retalho',
-      'location': 'Maputo · KaMpfumo',
-      'gender': 'Masculino',
-      'status': 'Regular',
-      'kyc_expires_at': '2026-10-20',
-      'registration_date': '2026-09-09',
-      'city': 'Maputo',
-      'nationality': 'Moçambicana',
-      'birth_date': '1999-07-28',
-      'marital_status': 'Solteiro(a)',
-      'manager': 'Naveia Muaquiquia João',
-    },
-    {
-      'id': 'mock-client-002',
-      'name': 'Edilson Pereira Langa',
-      'phone': '855 336 109',
-      'document': '110108869332-P',
-      'activity': 'Agricultura',
-      'location': 'Maputo · Marracuene',
-      'status': 'Regular',
-      'kyc_expires_at': '2026-10-20',
-      'registration_date': '2026-09-09',
-    },
-    {
-      'id': 'mock-client-003',
-      'name': 'Mucuaro Fernando',
-      'phone': '870 000 335',
-      'document': '031707123481-F',
-      'activity': 'Serviços',
-      'location': 'Maputo · Matola',
-      'status': 'Regular',
-      'kyc_expires_at': '2026-11-02',
-      'registration_date': '2026-09-09',
-    },
-    {
-      'id': 'mock-client-004',
-      'name': 'Neves João Madeira',
-      'phone': '876 608 410',
-      'document': '110104093182-B',
-      'activity': 'Comércio',
-      'location': 'Maputo · KaMubukwana',
-      'status': 'Regular',
-      'kyc_expires_at': '2026-12-02',
-      'registration_date': '2026-09-07',
-    },
-    {
-      'id': 'mock-client-005',
-      'name': 'Wezimane João Alficha',
-      'phone': '878 935 415',
-      'document': '060102696230-B',
-      'activity': 'Produção',
-      'location': 'Matola',
-      'status': 'Regular',
-      'registration_date': '2026-09-07',
-    },
-  ];
-
-  static final _mockBusinesses = <Json>[
-    {
-      'id': 'mock-business-001',
-      'legal_name': 'Ac esa Microcrédito, E.I',
-      'trading_name': 'Acesa Microcrédito',
-      'tax_number': '400123456',
-      'phone': '823 456 789',
-      'active': true,
-      'city': 'Maputo',
-      'entity_type': 'Sociedade limitada',
-      'license_number': 'LIC-2026-0081',
-      'activity': 'Serviços financeiros',
-      'registration_date': '2026-09-09',
-    },
-  ];
-
-  static final _mockGuarantors = <Json>[
-    {
-      'id': 'mock-guarantor-001',
-      'name': 'Muaquiquia João',
-      'phone': '869 198 551',
-      'document': '040501882771J',
-      'gender': 'Masculino',
-      'relationship': 'Familiar',
-      'birth_date': '1988-04-12',
-      'registration_date': '2026-05-27',
-    },
-  ];
-
   Widget _clientsBody() {
     if (route != 'clients') return _relatedClientsBody();
-    final source = rows.isEmpty ? _mockIndividualClients : rows;
+    final source = rows;
     final visible = clientStatusFilter == 'Todos'
         ? source
         : source
@@ -2772,12 +3422,12 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
             EqualButtonGroup(
               children: [
                 OutlinedButton.icon(
-                  onPressed: busy || loading ? null : importClients,
+                  onPressed: busy ? null : importClients,
                   icon: const Icon(Icons.upload_file),
                   label: const Text('Importar CSV'),
                 ),
                 FilledButton.icon(
-                  onPressed: busy || loading ? null : create,
+                  onPressed: busy ? null : create,
                   icon: const Icon(Icons.person_add),
                   label: const Text('Novo cliente'),
                 ),
@@ -2850,7 +3500,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                                 ],
                               ),
                             ),
-                            DataCell(Text('${row['phone'] ?? '—'}')),
+                            DataCell(Text(formatPhone(row['phone']))),
                             DataCell(Text('${row['document'] ?? '—'}')),
                             DataCell(_clientStatusBadge(row)),
                             DataCell(
@@ -2879,6 +3529,11 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                                     tooltip: 'Rever identificação',
                                     icon: Icons.verified_outlined,
                                     onPressed: () => kyc(row),
+                                  ),
+                                  _tableActionButton(
+                                    tooltip: 'Contratos e documentos',
+                                    icon: Icons.receipt_long_outlined,
+                                    onPressed: () => _clientDocuments(row),
                                   ),
                                   _tableActionButton(
                                     tooltip: 'Remover cliente',
@@ -2910,9 +3565,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         : coSigner
         ? 'Co-assinantes'
         : 'Clientes';
-    final visible = rows.isEmpty
-        ? (company ? _mockBusinesses : _mockGuarantors)
-        : rows;
+    final visible = rows;
     final columns = company
         ? const [
             ('legal_name', 'DENOMINAÇÃO LEGAL'),
@@ -2983,7 +3636,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
             SizedBox(
               height: 48,
               child: FilledButton.icon(
-                onPressed: busy || loading ? null : create,
+                onPressed: busy ? null : create,
                 icon: Icon(
                   company ? Icons.business_outlined : Icons.person_add,
                 ),
@@ -3085,16 +3738,186 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _clientDocuments(Json row) async {
+    final name = '${row['name'] ?? 'Cliente'}';
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Documentos de $name'),
+        content: SizedBox(
+          width: 460,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _documentAction(
+                dialogContext,
+                'Contrato de crédito',
+                'contrato.pdf',
+                row,
+              ),
+              _documentAction(
+                dialogContext,
+                'Contrato de confissão de dívida',
+                'contrato_confissao.pdf',
+                row,
+              ),
+              _documentAction(
+                dialogContext,
+                'Contrato de garantia',
+                'contrato_de_garantia.pdf',
+                row,
+              ),
+              _documentAction(
+                dialogContext,
+                'Estado do crédito',
+                'credito_estado.pdf',
+                row,
+              ),
+              _documentAction(
+                dialogContext,
+                'Recibo de desembolso',
+                'recibo_de_desembolso.pdf',
+                row,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _documentAction(
+    BuildContext dialogContext,
+    String label,
+    String filename,
+    Json client,
+  ) => ListTile(
+    leading: const Icon(FluentSystemIcons.picture_as_pdf_outlined),
+    title: Text(label),
+    subtitle: Text(filename),
+    trailing: const Icon(FluentSystemIcons.download),
+    onTap: () {
+      Navigator.pop(dialogContext);
+      _downloadClientDocument(label, filename, client);
+    },
+  );
+
+  Future<void> _downloadClientDocument(
+    String title,
+    String filename,
+    Json client,
+  ) async {
+    try {
+      final location = await getSaveLocation(suggestedName: filename);
+      if (location == null) return;
+      final branding = await InstitutionDocument.create();
+      Json? loan;
+      Json? guarantee;
+      try {
+        final loadedLoans = await api.get(
+          '/loans?limit=100&offset=0&clientId=${Uri.encodeQueryComponent('${client['id']}')}',
+        );
+        final loans = loadedLoans is Map && loadedLoans['data'] is List
+            ? loadedLoans['data'] as List
+            : loadedLoans as List;
+        if (loans.isNotEmpty)
+          loan = Map<String, dynamic>.from(loans.first as Map);
+      } catch (_) {
+        // The document remains available with explicit placeholders.
+      }
+      if (filename == 'contrato_de_garantia.pdf') {
+        try {
+          final loaded = await api.get(
+            '/client-guarantors?limit=100&offset=0&clientId=${Uri.encodeQueryComponent('${client['id']}')}',
+          );
+          final rows = loaded is Map && loaded['data'] is List
+              ? loaded['data'] as List
+              : loaded as List;
+          if (rows.isNotEmpty) {
+            guarantee = Map<String, dynamic>.from(rows.first as Map);
+          }
+        } catch (_) {
+          // Missing guarantee data is represented by placeholders.
+        }
+      }
+      final contracts = ClientContractDocuments(
+        branding: branding,
+        client: client,
+      );
+      final bytes = switch (filename) {
+        'contrato.pdf' => await contracts.creditContract(loan: loan),
+        'contrato_confissao.pdf' => await contracts.debtConfession(loan: loan),
+        'contrato_de_garantia.pdf' => await contracts.guaranteeContract(
+          loan: loan,
+          guarantee: guarantee,
+        ),
+        _ => await _genericClientDocument(title, branding),
+      };
+      await XFile.fromData(
+        bytes,
+        mimeType: 'application/pdf',
+      ).saveTo(location.path);
+      if (mounted) {
+        await _feedback(
+          'PDF guardado em ${location.path}',
+          title: 'PDF guardado',
+          success: true,
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        await _feedback(
+          'Não foi possível guardar o PDF: $error',
+          title: 'PDF não guardado',
+          success: false,
+        );
+      }
+    }
+  }
+
+  Future<Uint8List> _genericClientDocument(
+    String title,
+    InstitutionDocument branding,
+  ) async {
+    final document = pw.Document();
+    document.addPage(
+      pw.MultiPage(
+        pageTheme: branding.pageTheme(),
+        header: branding.header,
+        footer: branding.footer,
+        build: (_) => [
+          branding.title(
+            title,
+            subtitle: 'Documento emitido pelo sistema de gestão de crédito.',
+          ),
+          branding.information([
+            'Emitido em: ${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}',
+            'Formato: A4',
+          ]),
+          pw.SizedBox(height: 18),
+          pw.Text('${branding.data['documentNotes']}'),
+          branding.signature('Comprovativo'),
+        ],
+      ),
+    );
+    return document.save();
+  }
+
   Future<void> _removeClientRecord(
     Json row, {
     String resource = 'clients',
   }) async {
     final name = '${row['name'] ?? row['legal_name'] ?? 'este registo'}';
+    final client = resource == 'clients';
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Remover registo?'),
-        content: Text('Esta acção irá remover “$name”. Deseja continuar?'),
+        title: Text(client ? 'Arquivar cliente?' : 'Remover registo?'),
+        content: Text(
+          client
+              ? '“$name” deixará de aparecer entre os clientes activos. O histórico financeiro será preservado.'
+              : 'Esta acção irá remover “$name”. Deseja continuar?',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
@@ -3105,13 +3928,53 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
               backgroundColor: Theme.of(dialogContext).colorScheme.error,
             ),
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Remover'),
+            child: Text(client ? 'Arquivar' : 'Remover'),
           ),
         ],
       ),
     );
     if (confirmed == true && row['id'] != null && mounted) {
-      await mutate('DELETE', '/$resource/${row['id']}', {});
+      if (client) {
+        String? dateValue(Object? value) {
+          if (value == null) return null;
+          if (value is DateTime)
+            return value.toIso8601String().split('T').first;
+          final text = '$value';
+          return text.contains('T') ? text.split('T').first : text;
+        }
+
+        int? integerValue(Object? value) => value == null
+            ? null
+            : value is int
+            ? value
+            : int.tryParse('$value');
+
+        await mutate('PUT', '/clients/${row['id']}', {
+          'clientType': '${row['client_type'] ?? 'individual'}',
+          'name': '${row['name'] ?? ''}',
+          'phone': '${row['phone'] ?? ''}',
+          'document': '${row['document'] ?? ''}',
+          'activity': '${row['activity'] ?? ''}',
+          'location': '${row['location'] ?? ''}',
+          if (dateValue(row['birth_date']) case final value?)
+            'birthDate': value,
+          if (row['gender'] != null) 'gender': row['gender'],
+          if (row['marital_status'] != null)
+            'maritalStatus': row['marital_status'],
+          if (row['email'] != null) 'email': row['email'],
+          if (row['address'] != null) 'address': row['address'],
+          if (integerValue(row['monthly_income_cents']) case final value?)
+            'monthlyIncomeCents': value,
+          if (integerValue(row['monthly_expenses_cents']) case final value?)
+            'monthlyExpensesCents': value,
+          if (integerValue(row['dependents']) case final value?)
+            'dependents': value,
+          'archived': true,
+          'version': integerValue(row['version']) ?? 1,
+        });
+      } else {
+        await mutate('DELETE', '/$resource/${row['id']}', {});
+      }
     }
   }
 
@@ -3207,14 +4070,28 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     'co-signers' ||
     'client-guarantors' => Area.clients,
     'requests' => Area.applications,
-    'loans' || 'contracts' => Area.portfolio,
-    'payments' || 'receipts' => Area.collections,
+    'financing' => Area.creditFinancing,
+    'financial-analysis' => Area.financialAnalysis,
+    'credit-approval' => Area.creditApproval,
+    'credit-authorization' => Area.creditAuthorization,
+    'credit-disbursement' => Area.creditDisbursement,
+    'credit-status' => Area.creditStatus,
+    'credit-restructuring' => Area.creditRestructuring,
+    'credit-portfolio' ||
+    'loans' ||
+    'contracts' ||
+    'portfolio' => Area.portfolio,
+    'collections' || 'payments' || 'receipts' => Area.collections,
     'risk-scores' || 'aml-alerts' || 'field-visits' || 'documents' => Area.risk,
     'accounts' || 'account-transfers' => Area.accounts,
     'cash-entries' || 'reconciliations' || 'journal' => Area.treasury,
     'reports' => Area.reports,
+    _ when route.startsWith('report-') => Area.reports,
     'audit' => Area.audit,
-    'settings' || 'organization-settings' => Area.settings,
+    'plans' => Area.plans,
+    'settings' => Area.settings,
+    'organization-settings' => Area.settings,
+    'general-settings' => Area.generalSettings,
     _ => Area.dashboard,
   };
 
@@ -3223,14 +4100,28 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     Area.products => 'products',
     Area.clients => 'clients',
     Area.applications => 'requests',
-    Area.portfolio => 'loans',
-    Area.collections => 'payments',
+    Area.creditFinancing => 'financing',
+    Area.financialAnalysis => 'financial-analysis',
+    Area.creditApproval => 'credit-approval',
+    Area.creditAuthorization => 'credit-authorization',
+    Area.creditDisbursement => 'credit-disbursement',
+    Area.creditStatus => 'credit-status',
+    Area.creditRestructuring => 'credit-restructuring',
+    Area.portfolio => 'credit-portfolio',
+    Area.collections => 'collections',
     Area.risk => 'risk-scores',
     Area.accounts => 'accounts',
     Area.treasury => 'cash-entries',
     Area.reports => 'reports',
     Area.audit => 'audit',
-    Area.settings => 'settings',
+    Area.settings => 'organization-settings',
+    Area.generalSettings => 'general-settings',
+    Area.accounting => 'admin-accounting',
+    Area.sync => 'admin-sync',
+    Area.aml => 'admin-aml',
+    Area.users => 'admin-users',
+    Area.backup => 'admin-backup',
+    Area.plans => 'plans',
     _ => 'dashboard',
   };
 
@@ -3248,6 +4139,28 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   }
 
   void _selectSubmodule(String label) {
+    String? financeRoute;
+    for (final entry in _financeAreas.entries) {
+      if (entry.value == label) {
+        financeRoute = entry.key;
+        break;
+      }
+    }
+    if (financeRoute != null) {
+      select(financeRoute);
+      return;
+    }
+    String? reportRoute;
+    for (final entry in _reportKinds.entries) {
+      if (entry.value == label) {
+        reportRoute = entry.key;
+        break;
+      }
+    }
+    if (reportRoute != null) {
+      select(reportRoute);
+      return;
+    }
     if (label == 'Utilizadores') {
       select('users');
       return;
@@ -3312,7 +4225,6 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       offset = 0;
       rows = [];
       metrics = {};
-      pending = [];
       updated = null;
       search.text = selection.query;
     });
@@ -3324,8 +4236,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     final name = TextEditingController(text: '${profile['name'] ?? ''}');
     final email = TextEditingController(text: '${profile['email'] ?? ''}');
     final phone = TextEditingController(text: '${profile['phone'] ?? ''}');
-    final organization =
-        '${profile['organization_name'] ?? profile['organization'] ?? profile['organization_id'] ?? profile['organizationId'] ?? 'Organização actual'}';
+    final organization = _profileOrganizationName;
     final role = _roles[profile['role']] ?? '${profile['role'] ?? 'Operador'}';
     try {
       final changes = await showDialog<Json>(
@@ -3372,7 +4283,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                                     ?.copyWith(fontWeight: FontWeight.w800),
                               ),
                               Text(
-                                'Gerencie os seus dados de acesso ao SysCredi',
+                                'Gerencie os seus dados de acesso ao $_institutionName',
                                 style: TextStyle(
                                   color: scheme.onSurfaceVariant,
                                 ),
@@ -3494,30 +4405,36 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       if (changes == null || !mounted) return;
       if (profile['guest'] == true) {
         profile.addAll(changes);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Perfil actualizado nesta sessão.')),
+        await _feedback(
+          'Perfil actualizado nesta sessão.',
+          title: 'Perfil actualizado',
+          success: true,
         );
         return;
       }
       await api.write('PATCH', '/me', changes);
       await widget.session.verify();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Perfil actualizado com sucesso.')),
+        await _feedback(
+          'Perfil actualizado com sucesso.',
+          title: 'Perfil actualizado',
+          success: true,
         );
       }
     } on ApiFailure catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
+        await _feedback(
+          error.message,
+          title: 'Perfil não actualizado',
+          success: false,
+        );
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Não foi possível actualizar o perfil.'),
-          ),
+        await _feedback(
+          'Não foi possível actualizar o perfil.',
+          title: 'Perfil não actualizado',
+          success: false,
         );
       }
     } finally {
@@ -3561,6 +4478,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     required IconData icon,
     required VoidCallback onPressed,
     int badge = 0,
+    bool urgent = false,
   }) => IconButton(
     tooltip: tooltip,
     onPressed: onPressed,
@@ -3577,7 +4495,9 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
               padding: const EdgeInsets.symmetric(horizontal: 4),
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.primary,
+                color: urgent
+                    ? Theme.of(context).colorScheme.error
+                    : Theme.of(context).colorScheme.primary,
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
                   color: Theme.of(context).colorScheme.surface,
@@ -3587,7 +4507,9 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
               child: Text(
                 badge > 99 ? '99+' : '$badge',
                 style: TextStyle(
-                  color: Theme.of(context).colorScheme.onPrimary,
+                  color: urgent
+                      ? Theme.of(context).colorScheme.onError
+                      : Theme.of(context).colorScheme.onPrimary,
                   fontSize: 9,
                   fontWeight: FontWeight.w800,
                   height: 1,
@@ -3599,37 +4521,135 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     ),
   );
 
-  static const _mockNotifications = [
-    (
-      icon: FluentSystemIcons.warning,
-      title: 'Pagamento em atraso',
-      message: 'Existem prestações que precisam de acompanhamento.',
-      time: 'Há 12 min',
-    ),
-    (
-      icon: FluentSystemIcons.document,
-      title: 'Documentação pendente',
-      message: 'Um cliente aguarda revisão de identificação.',
-      time: 'Há 1 h',
-    ),
-    (
-      icon: FluentSystemIcons.check,
-      title: 'Operação confirmada',
-      message: 'O último desembolso foi processado com sucesso.',
-      time: 'Ontem',
-    ),
-  ];
+  IconData _notificationIcon(String category) => switch (category) {
+    'overdue' || 'compliance' => FluentSystemIcons.warning,
+    'document' || 'approval' => FluentSystemIcons.document,
+    _ => FluentSystemIcons.check,
+  };
+
+  bool _isUrgentPending(PendingWrite operation) {
+    final path = operation.path.toLowerCase();
+    return path.contains('/disburse') ||
+        path.contains('/payments') ||
+        path.contains('/cash-entries') ||
+        path.contains('/account-transfers') ||
+        path.contains('/loan-adjustments') ||
+        path.contains('/authorization');
+  }
+
+  String _notificationTime(Object? value) {
+    final created = DateTime.tryParse('$value')?.toLocal();
+    if (created == null) return '';
+    final elapsed = DateTime.now().difference(created);
+    if (elapsed.inMinutes < 1) return 'Agora';
+    if (elapsed.inHours < 1) return 'Há ${elapsed.inMinutes} min';
+    if (elapsed.inDays < 1) return 'Há ${elapsed.inHours} h';
+    if (elapsed.inDays == 1) return 'Ontem';
+    return 'Há ${elapsed.inDays} dias';
+  }
+
+  Future<void> _markNotificationsRead() async {
+    final unread = notifications
+        .where((row) => row['read_at'] == null && row['archived_at'] == null)
+        .toList();
+    for (final row in unread) {
+      await api.write('PATCH', '/notifications/${row['id']}/read', {});
+    }
+    if (!mounted) return;
+    setState(() {
+      for (final row in notifications) {
+        row['read_at'] ??= DateTime.now().toUtc().toIso8601String();
+      }
+    });
+  }
+
+  Future<void> _markNotificationRead(Json notification) async {
+    if (notification['read_at'] != null) return;
+    await api.write('PATCH', '/notifications/${notification['id']}/read', {});
+    if (!mounted) return;
+    setState(() {
+      notification['read_at'] = DateTime.now().toUtc().toIso8601String();
+    });
+  }
+
+  Future<void> _archiveNotification(Json notification) async {
+    await api.write(
+      'PATCH',
+      '/notifications/${notification['id']}/archive',
+      {},
+    );
+    if (!mounted) return;
+    setState(() {
+      notification['archived_at'] = DateTime.now().toUtc().toIso8601String();
+      notification['read_at'] ??= DateTime.now().toUtc().toIso8601String();
+    });
+  }
+
+  Future<void> _restoreNotification(Json notification) async {
+    await api.write(
+      'PATCH',
+      '/notifications/${notification['id']}/restore',
+      {},
+    );
+    if (!mounted) return;
+    setState(() => notification['archived_at'] = null);
+  }
+
+  Future<List<Json>> _loadNotificationCenter() async {
+    try {
+      final value = await api.get('/notifications?limit=100&offset=0') as List;
+      final loaded = value
+          .map((row) => Map<String, dynamic>.from(row as Map))
+          .toList();
+      if (mounted) setState(() => notifications = loaded);
+      return loaded;
+    } catch (_) {
+      if (notifications.isNotEmpty) {
+        return notifications
+            .map((row) => Map<String, dynamic>.from(row))
+            .toList();
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> _showNotificationCenter() async {
+    await showMenu<void>(
+      context: context,
+      position: const RelativeRect.fromLTRB(100000, 64, 16, 0),
+      color: Colors.transparent,
+      elevation: 0,
+      constraints: const BoxConstraints(minWidth: 390, maxWidth: 390),
+      items: [
+        PopupMenuItem<void>(
+          enabled: false,
+          padding: EdgeInsets.zero,
+          child: _NotificationCenterPopup(
+            load: _loadNotificationCenter,
+            markRead: _markNotificationRead,
+            markAllRead: _markNotificationsRead,
+            archive: _archiveNotification,
+            restore: _restoreNotification,
+            timeLabel: _notificationTime,
+            iconFor: _notificationIcon,
+            onPending: () {
+              Navigator.pop(context);
+              select('pending');
+            },
+          ),
+        ),
+      ],
+    );
+  }
 
   Widget _notificationMenu() {
     final scheme = Theme.of(context).colorScheme;
-    final badge = metrics['overdue_cents'] == null ? 0 : 6;
-    return PopupMenuButton<String>(
+    final badge = notifications
+        .where((row) => row['read_at'] == null && row['archived_at'] == null)
+        .length;
+    return IconButton(
       tooltip: 'Centro de notificações',
-      offset: const Offset(0, 12),
-      constraints: const BoxConstraints(minWidth: 360, maxWidth: 390),
-      color: scheme.surfaceContainerHigh,
-      elevation: 8,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      onPressed: _showNotificationCenter,
       icon: Stack(
         clipBehavior: Clip.none,
         children: [
@@ -3647,7 +4667,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                   border: Border.all(color: scheme.surface, width: 1.5),
                 ),
                 child: Text(
-                  '$badge',
+                  badge > 99 ? '99+' : '$badge',
                   style: TextStyle(
                     color: scheme.onPrimary,
                     fontSize: 9,
@@ -3658,93 +4678,6 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
             ),
         ],
       ),
-      onSelected: (value) {
-        if (value == 'pending') select('pending');
-        if (value == 'read') {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Notificações marcadas como lidas.')),
-          );
-        }
-      },
-      itemBuilder: (_) => [
-        PopupMenuItem<String>(
-          enabled: false,
-          height: 58,
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  'Centro de notificações',
-                  style: TextStyle(
-                    color: scheme.onSurface,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 16,
-                  ),
-                ),
-              ),
-              Text(
-                '$badge novas',
-                style: TextStyle(color: scheme.primary, fontSize: 12),
-              ),
-            ],
-          ),
-        ),
-        const PopupMenuDivider(),
-        for (final notification in _mockNotifications)
-          PopupMenuItem<String>(
-            enabled: false,
-            height: 72,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(notification.icon, color: scheme.primary, size: 20),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        notification.title,
-                        style: const TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                      Text(
-                        notification.message,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: scheme.onSurfaceVariant,
-                          fontSize: 12,
-                        ),
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        notification.time,
-                        style: TextStyle(color: scheme.primary, fontSize: 11),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        const PopupMenuDivider(),
-        const PopupMenuItem<String>(
-          value: 'pending',
-          child: ListTile(
-            dense: true,
-            leading: Icon(FluentSystemIcons.pending),
-            title: Text('Ver todas as pendências'),
-          ),
-        ),
-        const PopupMenuItem<String>(
-          value: 'read',
-          child: ListTile(
-            dense: true,
-            leading: Icon(FluentSystemIcons.check),
-            title: Text('Marcar como lidas'),
-          ),
-        ),
-      ],
     );
   }
 
@@ -3757,8 +4690,17 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
           : Drawer(
               child: SideBar(
                 area: _currentArea(),
-                onTap: _selectArea,
-                onSubmenu: _selectSubmodule,
+                activeRoute: route,
+                subscriptionSubtitle: _subscriptionSubtitle(),
+                subscriptionPackage: _subscriptionPackage(),
+                onTap: (area) {
+                  Navigator.of(context).pop();
+                  _selectArea(area);
+                },
+                onSubmenu: (label) {
+                  Navigator.of(context).pop();
+                  _selectSubmodule(label);
+                },
               ),
             ),
       body: Stack(
@@ -3769,6 +4711,9 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
               if (wide)
                 SideBar(
                   area: _currentArea(),
+                  activeRoute: route,
+                  subscriptionSubtitle: _subscriptionSubtitle(),
+                  subscriptionPackage: _subscriptionPackage(),
                   onTap: _selectArea,
                   onSubmenu: _selectSubmodule,
                 ),
@@ -3815,154 +4760,223 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                           tooltip: 'Pendências',
                           icon: FluentSystemIcons.pending,
                           badge: pending.length,
+                          urgent: pending.any(_isUrgentPending),
                           onPressed: () => select('pending'),
                         ),
                         _notificationMenu(),
                         _navbarAction(
-                          tooltip: 'Cobranças e tesouraria',
+                          tooltip: 'Cobrança',
                           icon: FluentSystemIcons.payments,
                           badge: metrics['overdue_cents'] == null ? 0 : 0,
-                          onPressed: () => select('payments'),
+                          onPressed: () => select('collections'),
                         ),
                         PopupMenuButton<ThemeMode>(
                           tooltip: 'Tema',
-                          icon: Icon(
-                            Theme.of(context).brightness == Brightness.dark
-                                ? FluentSystemIcons.brightness
-                                : FluentSystemIcons.light,
+                          icon: Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.surfaceContainerHighest,
+                              borderRadius: BorderRadius.circular(
+                                FluentTokens.radius8,
+                              ),
+                              border: Border.all(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.outlineVariant,
+                              ),
+                            ),
+                            child: Icon(
+                              Theme.of(context).brightness == Brightness.dark
+                                  ? FluentSystemIcons.brightness
+                                  : FluentSystemIcons.light,
+                              size: FluentTokens.iconMedium,
+                            ),
                           ),
-                          offset: const Offset(0, 12),
-                          constraints: const BoxConstraints(minWidth: 250),
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.surfaceContainerHigh,
-                          elevation: 8,
+                          offset: const Offset(0, FluentTokens.space8),
+                          constraints: const BoxConstraints(
+                            minWidth: 310,
+                            maxWidth: 330,
+                          ),
+                          color: Theme.of(context).colorScheme.surface,
+                          elevation: 0,
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
+                            borderRadius: BorderRadius.circular(
+                              FluentTokens.radius12,
+                            ),
+                            side: BorderSide(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.outlineVariant,
+                            ),
                           ),
                           onSelected: (selected) =>
                               widget.onTheme?.call(selected),
                           itemBuilder: (_) {
                             final current = themeMode.value;
+                            final scheme = Theme.of(context).colorScheme;
                             return [
                               PopupMenuItem<ThemeMode>(
                                 enabled: false,
-                                height: 76,
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Text(
-                                      'Aparência',
-                                      style: TextStyle(
-                                        color: Theme.of(
-                                          context,
-                                        ).colorScheme.onSurface,
-                                        fontWeight: FontWeight.w700,
-                                        fontSize: 16,
+                                height: 104,
+                                child: Container(
+                                  padding: const EdgeInsets.all(
+                                    FluentTokens.space16,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      colors: [
+                                        scheme.primary.withValues(alpha: .12),
+                                        scheme.tertiary.withValues(alpha: .05),
+                                      ],
+                                    ),
+                                    borderRadius: BorderRadius.circular(
+                                      FluentTokens.radius8,
+                                    ),
+                                    border: Border.all(
+                                      color: scheme.primary.withValues(
+                                        alpha: .18,
                                       ),
                                     ),
-                                    const SizedBox(height: 3),
-                                    Text(
-                                      'Escolha como o SysCredi é apresentado',
-                                      style: TextStyle(
-                                        color: Theme.of(
-                                          context,
-                                        ).colorScheme.onSurfaceVariant,
-                                        fontSize: 12,
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Container(
+                                        width: 42,
+                                        height: 42,
+                                        decoration: BoxDecoration(
+                                          color: scheme.primary,
+                                          borderRadius: BorderRadius.circular(
+                                            FluentTokens.radius8,
+                                          ),
+                                        ),
+                                        child: Icon(
+                                          FluentSystemIcons.brightness,
+                                          color: scheme.onPrimary,
+                                          size: FluentTokens.iconMedium,
+                                        ),
                                       ),
-                                    ),
-                                  ],
+                                      const SizedBox(
+                                        width: FluentTokens.space12,
+                                      ),
+                                      Expanded(
+                                        child: Column(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              'Aparência',
+                                              style: TextStyle(
+                                                color: scheme.onSurface,
+                                                fontWeight: FontWeight.w800,
+                                                fontSize: 17,
+                                              ),
+                                            ),
+                                            const SizedBox(
+                                              height: FluentTokens.space4,
+                                            ),
+                                            Text(
+                                              'Escolha o tema do $_institutionName',
+                                              maxLines: 2,
+                                              style: TextStyle(
+                                                color: scheme.onSurfaceVariant,
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
+                              const PopupMenuDivider(),
                               for (final option in [
                                 (
                                   ThemeMode.system,
                                   'Automático',
-                                  FluentSystemIcons.brightness,
+                                  'Segue a definição do dispositivo',
+                                  FluentSystemIcons.systemTheme,
                                 ),
                                 (
                                   ThemeMode.light,
                                   'Claro',
+                                  'Superfícies claras e alto contraste',
                                   FluentSystemIcons.light,
                                 ),
                                 (
                                   ThemeMode.dark,
                                   'Escuro',
-                                  FluentSystemIcons.brightness,
+                                  'Confortável em ambientes com pouca luz',
+                                  FluentSystemIcons.darkTheme,
                                 ),
                               ])
                                 PopupMenuItem<ThemeMode>(
                                   value: option.$1,
-                                  height: 58,
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                      vertical: 7,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: current == option.$1
-                                          ? Theme.of(context)
-                                                .colorScheme
-                                                .primary
-                                                .withValues(alpha: .10)
-                                          : Colors.transparent,
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        Icon(option.$3, size: 19),
-                                        const SizedBox(width: 12),
-                                        Expanded(
-                                          child: Text(
-                                            option.$2,
-                                            style: TextStyle(
-                                              fontWeight: current == option.$1
-                                                  ? FontWeight.w700
-                                                  : FontWeight.w500,
-                                            ),
-                                          ),
-                                        ),
-                                        if (current == option.$1)
-                                          Icon(
-                                            FluentSystemIcons.check,
-                                            size: 18,
-                                            color: Theme.of(
-                                              context,
-                                            ).colorScheme.primary,
-                                          ),
-                                      ],
-                                    ),
+                                  height: 72,
+                                  child: _ThemeMenuOption(
+                                    icon: option.$4,
+                                    title: option.$2,
+                                    subtitle: option.$3,
+                                    selected: current == option.$1,
                                   ),
                                 ),
                             ];
                           },
                         ),
-                        IconButton(
-                          tooltip: 'Definições',
-                          onPressed: busy ? null : () => select('settings'),
-                          icon: const Icon(FluentSystemIcons.settings),
-                        ),
                         const SizedBox(width: 12),
                         PopupMenuButton<String>(
                           tooltip: 'Conta',
-                          icon: const Icon(FluentSystemIcons.account),
-                          offset: const Offset(0, 12),
-                          constraints: const BoxConstraints(minWidth: 285),
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.surfaceContainerHigh,
-                          elevation: 8,
+                          icon: Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.surfaceContainerHighest,
+                              borderRadius: BorderRadius.circular(
+                                FluentTokens.radius8,
+                              ),
+                              border: Border.all(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.outlineVariant,
+                              ),
+                            ),
+                            child: const Icon(
+                              FluentSystemIcons.account,
+                              size: FluentTokens.iconMedium,
+                            ),
+                          ),
+                          offset: const Offset(0, FluentTokens.space8),
+                          constraints: const BoxConstraints(
+                            minWidth: 320,
+                            maxWidth: 340,
+                          ),
+                          color: Theme.of(context).colorScheme.surface,
+                          elevation: 0,
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
+                            borderRadius: BorderRadius.circular(
+                              FluentTokens.radius12,
+                            ),
+                            side: BorderSide(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.outlineVariant,
+                            ),
                           ),
                           onSelected: (value) async {
                             if (value == 'logout')
                               await widget.session.logout();
                             if (value == 'organization')
                               await selectOrganization();
-                            if (value == 'settings' && context.mounted)
-                              select('settings');
+                            if (value == 'settings' && context.mounted) {
+                              select('general-settings');
+                            }
                             if (value == 'profile' && context.mounted) {
                               await _showProfileDialog();
                             }
@@ -3974,47 +4988,73 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                             final role =
                                 _roles[profile['role']] ??
                                 '${profile['role'] ?? 'Operador'}';
-                            final organization =
-                                '${profile['organization_name'] ?? profile['organization'] ?? profile['organization_id'] ?? profile['organizationId'] ?? 'Organização actual'}';
+                            final organization = _profileOrganizationName;
                             final email =
                                 '${profile['email'] ?? 'Acesso autenticado'}';
                             return [
                               PopupMenuItem<String>(
                                 enabled: false,
-                                height: 126,
+                                height: 132,
                                 child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 10,
+                                  padding: const EdgeInsets.all(
+                                    FluentTokens.space16,
                                   ),
                                   decoration: BoxDecoration(
-                                    color: scheme.primary.withValues(
-                                      alpha: .08,
+                                    gradient: LinearGradient(
+                                      colors: [
+                                        scheme.primary.withValues(alpha: .12),
+                                        scheme.secondary.withValues(alpha: .06),
+                                      ],
                                     ),
-                                    borderRadius: BorderRadius.circular(10),
+                                    borderRadius: BorderRadius.circular(
+                                      FluentTokens.radius8,
+                                    ),
+                                    border: Border.all(
+                                      color: scheme.primary.withValues(
+                                        alpha: .18,
+                                      ),
+                                    ),
                                   ),
                                   child: Row(
                                     crossAxisAlignment:
-                                        CrossAxisAlignment.start,
+                                        CrossAxisAlignment.center,
                                     children: [
-                                      CircleAvatar(
-                                        radius: 23,
-                                        backgroundColor: scheme.primary,
+                                      Container(
+                                        width: 52,
+                                        height: 52,
+                                        decoration: BoxDecoration(
+                                          color: scheme.primary,
+                                          borderRadius: BorderRadius.circular(
+                                            FluentTokens.radius12,
+                                          ),
+                                          boxShadow: FluentTokens.elevation(
+                                            context,
+                                          ),
+                                        ),
+                                        alignment: Alignment.center,
                                         child: Text(
-                                          name
-                                              .trim()
-                                              .split(RegExp(r'\s+'))
-                                              .take(2)
-                                              .map((part) => part[0])
-                                              .join()
-                                              .toUpperCase(),
+                                          name.trim().isEmpty
+                                              ? 'U'
+                                              : name
+                                                    .trim()
+                                                    .split(RegExp(r'\s+'))
+                                                    .where(
+                                                      (part) => part.isNotEmpty,
+                                                    )
+                                                    .take(2)
+                                                    .map((part) => part[0])
+                                                    .join()
+                                                    .toUpperCase(),
                                           style: TextStyle(
                                             color: scheme.onPrimary,
+                                            fontSize: 17,
                                             fontWeight: FontWeight.w800,
                                           ),
                                         ),
                                       ),
-                                      const SizedBox(width: 12),
+                                      const SizedBox(
+                                        width: FluentTokens.space12,
+                                      ),
                                       Expanded(
                                         child: Column(
                                           crossAxisAlignment:
@@ -4028,7 +5068,9 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                                                 fontWeight: FontWeight.w800,
                                               ),
                                             ),
-                                            const SizedBox(height: 2),
+                                            const SizedBox(
+                                              height: FluentTokens.space2,
+                                            ),
                                             Text(
                                               email,
                                               maxLines: 1,
@@ -4038,24 +5080,33 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                                                 fontSize: 12,
                                               ),
                                             ),
-                                            const SizedBox(height: 8),
-                                            Row(
-                                              children: [
-                                                Icon(
-                                                  FluentSystemIcons.check,
-                                                  size: 14,
-                                                  color: scheme.primary,
-                                                ),
-                                                const SizedBox(width: 5),
-                                                Text(
-                                                  'Sessão activa · $role',
-                                                  style: TextStyle(
-                                                    color: scheme.primary,
-                                                    fontSize: 11,
-                                                    fontWeight: FontWeight.w700,
+                                            const SizedBox(
+                                              height: FluentTokens.space8,
+                                            ),
+                                            Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal:
+                                                        FluentTokens.space8,
+                                                    vertical:
+                                                        FluentTokens.space4,
                                                   ),
+                                              decoration: BoxDecoration(
+                                                color: scheme.primary
+                                                    .withValues(alpha: .10),
+                                                borderRadius:
+                                                    BorderRadius.circular(
+                                                      FluentTokens.radius6,
+                                                    ),
+                                              ),
+                                              child: Text(
+                                                role,
+                                                style: TextStyle(
+                                                  color: scheme.primary,
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.w800,
                                                 ),
-                                              ],
+                                              ),
                                             ),
                                           ],
                                         ),
@@ -4066,83 +5117,45 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                               ),
                               PopupMenuItem<String>(
                                 enabled: false,
-                                height: 48,
-                                child: Row(
-                                  children: [
-                                    Icon(
-                                      FluentSystemIcons.business,
-                                      size: 18,
-                                      color: scheme.onSurfaceVariant,
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            'Organização',
-                                            style: TextStyle(
-                                              color: scheme.onSurfaceVariant,
-                                              fontSize: 11,
-                                            ),
-                                          ),
-                                          Text(
-                                            organization,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: const TextStyle(
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
+                                height: 58,
+                                child: _ProfileMenuOrganization(
+                                  organization: organization,
                                 ),
                               ),
                               const PopupMenuDivider(),
-                              const PopupMenuItem(
+                              PopupMenuItem(
                                 value: 'profile',
-                                child: ListTile(
-                                  dense: true,
-                                  leading: Icon(FluentSystemIcons.account),
-                                  title: Text('Ver perfil'),
-                                ),
-                              ),
-                              const PopupMenuItem(
-                                value: 'organization',
-                                child: ListTile(
-                                  dense: true,
-                                  leading: Icon(FluentSystemIcons.business),
-                                  title: Text('Mudar organização'),
-                                ),
-                              ),
-                              const PopupMenuItem(
-                                value: 'settings',
-                                child: ListTile(
-                                  dense: true,
-                                  leading: Icon(FluentSystemIcons.settings),
-                                  title: Text('Definições da conta'),
+                                child: _ProfileMenuAction(
+                                  icon: FluentSystemIcons.account,
+                                  title: 'Ver perfil',
+                                  subtitle: 'Dados pessoais e segurança',
                                 ),
                               ),
                               PopupMenuItem(
+                                value: 'organization',
+                                child: _ProfileMenuAction(
+                                  icon: FluentSystemIcons.business,
+                                  title: 'Mudar organização',
+                                  subtitle: 'Trocar o espaço de trabalho',
+                                ),
+                              ),
+                              PopupMenuItem(
+                                value: 'settings',
+                                child: _ProfileMenuAction(
+                                  icon: FluentSystemIcons.settings,
+                                  title: 'Definições gerais',
+                                  subtitle:
+                                      'Segurança, aparência e preferências',
+                                ),
+                              ),
+                              const PopupMenuDivider(),
+                              PopupMenuItem(
                                 value: 'logout',
-                                child: ListTile(
-                                  dense: true,
-                                  leading: Icon(
-                                    FluentSystemIcons.close,
-                                    color: Theme.of(context).colorScheme.error,
-                                  ),
-                                  title: Text(
-                                    'Terminar sessão',
-                                    style: TextStyle(
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.error,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
+                                child: _ProfileMenuAction(
+                                  icon: FluentSystemIcons.close,
+                                  title: 'Terminar sessão',
+                                  subtitle: 'Sair deste dispositivo',
+                                  destructive: true,
                                 ),
                               ),
                             ];
@@ -4150,45 +5163,63 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                         ),
                       ],
                     ),
-                    if (loading || busy) const LinearProgressIndicator(),
+                    if ((refreshing || busy) && route != 'plans')
+                      const LinearProgressIndicator(),
                     Expanded(
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.all(20),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            if (![
-                              'dashboard',
-                              'simulator',
-                              'reports',
-                              'pending',
-                            ].contains(route))
-                              Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 16,
-                                ),
-                                child: TextField(
-                                  controller: search,
-                                  decoration: InputDecoration(
-                                    labelText: 'Pesquisar',
-                                    suffixIcon: IconButton(
-                                      onPressed: () {
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          const BrandWatermarkOverlay(),
+                          SingleChildScrollView(
+                            padding: const EdgeInsets.all(20),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if (!route.startsWith('admin-') &&
+                                    !route.startsWith('report-') &&
+                                    !_financeAreas.containsKey(route) &&
+                                    ![
+                                      'dashboard',
+                                      'simulator',
+                                      'reports',
+                                      'pending',
+                                      'audit',
+                                      'settings',
+                                      'general-settings',
+                                      'organization-settings',
+                                      'risk-scores',
+                                      'plans',
+                                      'collections',
+                                      'products',
+                                    ].contains(route))
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 16,
+                                    ),
+                                    child: TextField(
+                                      controller: search,
+                                      decoration: InputDecoration(
+                                        labelText: 'Pesquisar',
+                                        suffixIcon: IconButton(
+                                          onPressed: () {
+                                            offset = 0;
+                                            load();
+                                          },
+                                          icon: const Icon(Icons.search),
+                                        ),
+                                      ),
+                                      onSubmitted: (_) {
                                         offset = 0;
                                         load();
                                       },
-                                      icon: const Icon(Icons.search),
                                     ),
                                   ),
-                                  onSubmitted: (_) {
-                                    offset = 0;
-                                    load();
-                                  },
-                                ),
-                              ),
-                            const SizedBox(height: 20),
-                            _body(),
-                          ],
-                        ),
+                                const SizedBox(height: 20),
+                                _body(),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
@@ -4196,7 +5227,763 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
               ),
             ],
           ),
-          const BrandWatermarkOverlay(),
+        ],
+      ),
+    );
+  }
+}
+
+class _ExpiredTrialIdentifier extends StatelessWidget {
+  const _ExpiredTrialIdentifier({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.onCopy,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final VoidCallback onCopy;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+      decoration: BoxDecoration(
+        color: scheme.surface.withValues(alpha: .68),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: .8)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: scheme.primary.withValues(alpha: .1),
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Icon(icon, size: 18, color: scheme.primary),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: scheme.onSurfaceVariant,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                SelectableText(
+                  value.isEmpty ? 'Não disponível' : value,
+                  style: TextStyle(
+                    color: value.isEmpty ? scheme.error : scheme.primary,
+                    fontFamily: 'monospace',
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: .35,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Copiar $label',
+            onPressed: value.isEmpty ? null : onCopy,
+            icon: const Icon(Icons.document),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NotificationCenterPopup extends StatefulWidget {
+  const _NotificationCenterPopup({
+    required this.load,
+    required this.markRead,
+    required this.markAllRead,
+    required this.archive,
+    required this.restore,
+    required this.timeLabel,
+    required this.iconFor,
+    required this.onPending,
+  });
+
+  final Future<List<Json>> Function() load;
+  final Future<void> Function(Json notification) markRead;
+  final Future<void> Function() markAllRead;
+  final Future<void> Function(Json notification) archive;
+  final Future<void> Function(Json notification) restore;
+  final String Function(Object? value) timeLabel;
+  final IconData Function(String category) iconFor;
+  final VoidCallback onPending;
+
+  @override
+  State<_NotificationCenterPopup> createState() =>
+      _NotificationCenterPopupState();
+}
+
+class _NotificationCenterPopupState extends State<_NotificationCenterPopup> {
+  late Future<List<Json>> future;
+  String filter = 'all';
+  bool working = false;
+  bool refreshing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    future = widget.load();
+  }
+
+  Future<void> refresh() async {
+    if (refreshing) return;
+    setState(() {
+      refreshing = true;
+      future = widget.load();
+    });
+    try {
+      await future;
+    } finally {
+      if (mounted) setState(() => refreshing = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: 390,
+      constraints: const BoxConstraints(maxHeight: 440),
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: BorderRadius.circular(FluentTokens.radius12),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(FluentTokens.radius12),
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 10, 8, 8),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Notificações',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Actualizar',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: working || refreshing ? null : refresh,
+                    icon: refreshing
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(FluentSystemIcons.refresh, size: 17),
+                  ),
+                  IconButton(
+                    tooltip: 'Fechar',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(FluentSystemIcons.close, size: 17),
+                  ),
+                ],
+              ),
+            ),
+            FutureBuilder<List<Json>>(
+              future: future,
+              builder: (context, snapshot) {
+                final rows = snapshot.data ?? const <Json>[];
+                final unread = rows
+                    .where(
+                      (row) =>
+                          row['read_at'] == null && row['archived_at'] == null,
+                    )
+                    .length;
+                final archived = rows
+                    .where((row) => row['archived_at'] != null)
+                    .length;
+                return Container(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                  decoration: BoxDecoration(
+                    border: Border(
+                      bottom: BorderSide(color: scheme.outlineVariant),
+                    ),
+                  ),
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _notificationSelector(
+                              value: 'all',
+                              title: 'Todas',
+                              subtitle: '${rows.length - archived}',
+                              icon: FluentSystemIcons.notifications,
+                            ),
+                          ),
+                          const SizedBox(width: FluentTokens.space8),
+                          Expanded(
+                            child: _notificationSelector(
+                              value: 'unread',
+                              title: 'Novas',
+                              subtitle: '$unread',
+                              icon: FluentSystemIcons.pending,
+                            ),
+                          ),
+                          const SizedBox(width: FluentTokens.space8),
+                          Expanded(
+                            child: _notificationSelector(
+                              value: 'archived',
+                              title: 'Arquivo',
+                              subtitle: '$archived',
+                              icon: FluentSystemIcons.history,
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (unread > 0) ...[
+                        const SizedBox(height: 6),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: IconButton(
+                            tooltip: 'Marcar todas como lidas',
+                            visualDensity: VisualDensity.compact,
+                            onPressed: working
+                                ? null
+                                : () async {
+                                    setState(() => working = true);
+                                    try {
+                                      await widget.markAllRead();
+                                      await refresh();
+                                    } finally {
+                                      if (mounted) {
+                                        setState(() => working = false);
+                                      }
+                                    }
+                                  },
+                            icon: const Icon(FluentSystemIcons.check, size: 17),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                );
+              },
+            ),
+            Expanded(
+              child: FutureBuilder<List<Json>>(
+                future: future,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(
+                      child: SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    );
+                  }
+                  if (snapshot.hasError) {
+                    return _empty(
+                      FluentSystemIcons.error,
+                      'Não foi possível carregar',
+                      action: IconButton(
+                        tooltip: 'Tentar novamente',
+                        onPressed: refresh,
+                        icon: const Icon(FluentSystemIcons.refresh),
+                      ),
+                    );
+                  }
+                  final all = snapshot.data ?? const <Json>[];
+                  final rows = switch (filter) {
+                    'unread' =>
+                      all
+                          .where(
+                            (row) =>
+                                row['read_at'] == null &&
+                                row['archived_at'] == null,
+                          )
+                          .toList(),
+                    'archived' =>
+                      all.where((row) => row['archived_at'] != null).toList(),
+                    _ =>
+                      all.where((row) => row['archived_at'] == null).toList(),
+                  };
+                  if (rows.isEmpty) {
+                    return _empty(
+                      FluentSystemIcons.notifications,
+                      filter == 'unread'
+                          ? 'Sem notificações novas'
+                          : filter == 'archived'
+                          ? 'Arquivo vazio'
+                          : 'Sem notificações',
+                    );
+                  }
+                  return ListView.separated(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    itemCount: rows.length,
+                    separatorBuilder: (_, _) => Divider(
+                      height: 1,
+                      indent: 52,
+                      color: scheme.outlineVariant,
+                    ),
+                    itemBuilder: (context, index) => _tile(rows[index]),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _notificationSelector({
+    required String value,
+    required String title,
+    required String subtitle,
+    required IconData icon,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    final selected = filter == value;
+    return Material(
+      color: selected
+          ? scheme.primary.withValues(alpha: .07)
+          : scheme.surfaceContainerLow,
+      borderRadius: BorderRadius.circular(FluentTokens.radius8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(FluentTokens.radius8),
+        onTap: () => setState(() => filter = value),
+        child: AnimatedContainer(
+          duration: FluentTokens.fast,
+          height: 40,
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(FluentTokens.radius8),
+            border: Border.all(
+              color: selected ? scheme.primary : scheme.outlineVariant,
+              width: selected ? 1.5 : 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                icon,
+                size: 17,
+                color: selected ? scheme.primary : scheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        title,
+                        maxLines: 1,
+                        softWrap: false,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: selected ? scheme.primary : scheme.onSurface,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      softWrap: false,
+                      style: TextStyle(
+                        color: selected
+                            ? scheme.primary
+                            : scheme.onSurfaceVariant,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (selected)
+                Icon(FluentSystemIcons.check, size: 14, color: scheme.primary),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _tile(Json notification) {
+    final scheme = Theme.of(context).colorScheme;
+    final unread = notification['read_at'] == null;
+    final archived = notification['archived_at'] != null;
+    final category = '${notification['category'] ?? ''}';
+    return Material(
+      color: unread
+          ? scheme.primary.withValues(alpha: .055)
+          : Colors.transparent,
+      child: InkWell(
+        onTap: working || !unread
+            ? null
+            : () async {
+                setState(() => working = true);
+                try {
+                  await widget.markRead(notification);
+                  setState(() {});
+                } finally {
+                  if (mounted) setState(() => working = false);
+                }
+              },
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(
+                  color: scheme.primary.withValues(alpha: .10),
+                  borderRadius: BorderRadius.circular(FluentTokens.radius6),
+                ),
+                child: Icon(
+                  widget.iconFor(category),
+                  color: scheme.primary,
+                  size: 15,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '${notification['title'] ?? 'Notificação'}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: unread
+                                  ? FontWeight.w800
+                                  : FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        if (unread)
+                          Container(
+                            width: 6,
+                            height: 6,
+                            margin: const EdgeInsets.only(left: 6),
+                            decoration: BoxDecoration(
+                              color: scheme.primary,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${notification['body'] ?? ''}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: scheme.onSurfaceVariant,
+                        fontSize: 11,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      widget.timeLabel(notification['created_at']),
+                      style: TextStyle(
+                        color: scheme.onSurfaceVariant,
+                        fontSize: 10,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                tooltip: archived
+                    ? 'Restaurar notificação'
+                    : 'Arquivar notificação',
+                visualDensity: VisualDensity.compact,
+                onPressed: working
+                    ? null
+                    : () async {
+                        setState(() => working = true);
+                        try {
+                          if (archived) {
+                            await widget.restore(notification);
+                          } else {
+                            await widget.archive(notification);
+                          }
+                          await refresh();
+                        } finally {
+                          if (mounted) setState(() => working = false);
+                        }
+                      },
+                icon: Icon(
+                  archived
+                      ? FluentSystemIcons.restoreArchive
+                      : FluentSystemIcons.archive,
+                  size: 15,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _empty(IconData icon, String text, {Widget? action}) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 28, color: Theme.of(context).colorScheme.primary),
+          const SizedBox(height: 8),
+          Text(text, style: const TextStyle(fontWeight: FontWeight.w700)),
+          if (action != null) action,
+        ],
+      ),
+    ),
+  );
+}
+
+class _ProfileMenuOrganization extends StatelessWidget {
+  const _ProfileMenuOrganization({required this.organization});
+
+  final String organization;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Row(
+      children: [
+        Container(
+          width: 34,
+          height: 34,
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(FluentTokens.radius8),
+          ),
+          child: Icon(
+            FluentSystemIcons.business,
+            size: FluentTokens.iconSmall,
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(width: FluentTokens.space12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                'ORGANIZAÇÃO',
+                style: TextStyle(
+                  color: scheme.onSurfaceVariant,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: .5,
+                ),
+              ),
+              const SizedBox(height: FluentTokens.space2),
+              Text(
+                organization,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ProfileMenuAction extends StatelessWidget {
+  const _ProfileMenuAction({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    this.destructive = false,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final bool destructive;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final color = destructive ? scheme.error : scheme.onSurface;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: FluentTokens.space4),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: destructive
+                  ? scheme.error.withValues(alpha: .10)
+                  : scheme.primary.withValues(alpha: .08),
+              borderRadius: BorderRadius.circular(FluentTokens.radius8),
+            ),
+            child: Icon(icon, size: FluentTokens.iconSmall, color: color),
+          ),
+          const SizedBox(width: FluentTokens.space12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(color: color, fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: FluentTokens.space2),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    color: destructive
+                        ? scheme.error.withValues(alpha: .78)
+                        : scheme.onSurfaceVariant,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Icon(
+            FluentSystemIcons.chevronRight,
+            size: 14,
+            color: destructive ? scheme.error : scheme.onSurfaceVariant,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ThemeMenuOption extends StatelessWidget {
+  const _ThemeMenuOption({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.selected,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: FluentTokens.space8,
+        vertical: FluentTokens.space8,
+      ),
+      decoration: BoxDecoration(
+        color: selected
+            ? scheme.primary.withValues(alpha: .10)
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(FluentTokens.radius8),
+        border: selected
+            ? Border.all(color: scheme.primary.withValues(alpha: .24))
+            : null,
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: selected
+                  ? scheme.primary.withValues(alpha: .14)
+                  : scheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(FluentTokens.radius8),
+            ),
+            child: Icon(
+              icon,
+              size: FluentTokens.iconSmall,
+              color: selected ? scheme.primary : scheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(width: FluentTokens.space12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
+                    color: selected ? scheme.primary : scheme.onSurface,
+                  ),
+                ),
+                const SizedBox(height: FluentTokens.space2),
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: scheme.onSurfaceVariant,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: FluentTokens.space8),
+          AnimatedContainer(
+            duration: FluentTokens.fast,
+            width: 20,
+            height: 20,
+            decoration: BoxDecoration(
+              color: selected ? scheme.primary : Colors.transparent,
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: selected ? scheme.primary : scheme.outline,
+              ),
+            ),
+            child: selected
+                ? Icon(
+                    FluentSystemIcons.check,
+                    size: 12,
+                    color: scheme.onPrimary,
+                  )
+                : null,
+          ),
         ],
       ),
     );

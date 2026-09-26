@@ -72,12 +72,23 @@ class FluentSurface extends StatelessWidget {
       decoration: BoxDecoration(
         color: cardColor,
         borderRadius: BorderRadius.circular(FluentTokens.radius12),
-        border: Border.all(color: materialTheme.colorScheme.outlineVariant),
+        border: Border.all(
+          color: Color.lerp(
+            materialTheme.colorScheme.outlineVariant,
+            materialTheme.colorScheme.primary,
+            .14,
+          )!,
+        ),
         boxShadow: [
           BoxShadow(
             color: shadowColor.withValues(alpha: .18),
             blurRadius: 18,
             offset: const Offset(0, 4),
+          ),
+          BoxShadow(
+            color: materialTheme.colorScheme.primary.withValues(alpha: .035),
+            blurRadius: 2,
+            spreadRadius: 1,
           ),
         ],
       ),

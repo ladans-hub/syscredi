@@ -1,4 +1,6 @@
 import 'package:fluent_ui/fluent_ui.dart' as fluent;
+import 'package:fluentui_system_icons/fluentui_system_icons.dart'
+    as fluent_system;
 
 /// Compatibility surface for legacy widget code.
 ///
@@ -15,7 +17,8 @@ abstract final class Icons {
   static const arrowBack = fluent.FluentIcons.back;
   static const arrow_forward_rounded = fluent.FluentIcons.forward;
   static const assessment_outlined = fluent.FluentIcons.analytics_view;
-  static const assignment_outlined = fluent.FluentIcons.document;
+  static const assignment_outlined =
+      fluent_system.FluentIcons.document_24_regular;
   static const assignment_turned_in_outlined =
       fluent.FluentIcons.document_approval;
   static const attach_money_rounded = fluent.FluentIcons.money;
@@ -45,8 +48,9 @@ abstract final class Icons {
   static const dashboard_outlined = fluent.FluentIcons.view_dashboard;
   static const dark_mode_outlined = fluent.FluentIcons.brightness;
   static const delete_sweep_outlined = fluent.FluentIcons.delete;
-  static const description_outlined = fluent.FluentIcons.document;
-  static const document = fluent.FluentIcons.document;
+  static const description_outlined =
+      fluent_system.FluentIcons.document_24_regular;
+  static const document = fluent_system.FluentIcons.document_24_regular;
   static const edit = fluent.FluentIcons.edit;
   static const download = fluent.FluentIcons.download;
   static const error = fluent.FluentIcons.error;

@@ -3,6 +3,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart' hide Icons;
 import '../../../app/theme/fluent_icons_compat.dart';
+import '../../../app/theme/app_theme.dart';
 
 import '../domain/repository.dart';
 import '../../../app/theme/design_tokens.dart';
@@ -52,12 +53,11 @@ class _WorkspaceSearchDialogState extends State<WorkspaceSearchDialog> {
       loading = scope != 'areas' && controller.text.trim().isNotEmpty;
     });
     if (!loading) return;
-    final path = scope;
     final query = controller.text.trim();
     debounce = Timer(const Duration(milliseconds: 300), () async {
       try {
         final data = await widget.repository.get(
-          '/$path?limit=12&offset=0&q=${Uri.encodeQueryComponent(query)}',
+          '/search?limit=12&scope=$scope&q=${Uri.encodeQueryComponent(query)}',
         );
         if (!mounted || generation != current) return;
         setState(
@@ -242,7 +242,16 @@ class _WorkspaceSearchDialogState extends State<WorkspaceSearchDialog> {
                       const Divider(height: 1),
                       Expanded(
                         child: loading
-                            ? const Center(child: CircularProgressIndicator())
+                            ? const Center(
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    SyscrediProgressIndicator(size: 42),
+                                    SizedBox(height: 16),
+                                    Text('A procurar resultados…'),
+                                  ],
+                                ),
+                              )
                             : error != null
                             ? _message(
                                 Icons.cloud_off_outlined,
@@ -332,10 +341,10 @@ class _WorkspaceSearchDialogState extends State<WorkspaceSearchDialog> {
                                       color: colors.primary,
                                     ),
                                     title: Text(
-                                      '${row['name'] ?? row['client_name'] ?? row['reference'] ?? id}',
+                                      '${row['title'] ?? row['name'] ?? row['client_name'] ?? row['reference'] ?? id}',
                                     ),
                                     subtitle: Text(
-                                      'Referência: $id',
+                                      '${row['subtitle'] ?? 'Referência: $id'}',
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                     ),
@@ -343,8 +352,10 @@ class _WorkspaceSearchDialogState extends State<WorkspaceSearchDialog> {
                                       Icons.arrow_forward_rounded,
                                       size: 18,
                                     ),
-                                    onTap: () =>
-                                        open(scope, id.isEmpty ? query : id),
+                                    onTap: () => open(
+                                      '${row['path'] ?? scope}',
+                                      id.isEmpty ? query : id,
+                                    ),
                                   );
                                 },
                               ),

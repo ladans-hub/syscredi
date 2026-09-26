@@ -2,8 +2,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../domain/repository.dart';
 
 class SupabaseAuthGateway implements AuthGateway {
-  SupabaseAuthGateway(this.client);
+  SupabaseAuthGateway(this.client, {this.passwordRecoveryUrl});
   final SupabaseClient client;
+  final String? passwordRecoveryUrl;
   @override
   String? get userId => client.auth.currentUser?.id;
   @override
@@ -12,6 +13,26 @@ class SupabaseAuthGateway implements AuthGateway {
   Stream<bool> get sessionChanges => client.auth.onAuthStateChange.map(
     (event) => event.event != AuthChangeEvent.signedOut && hasSession,
   );
+  @override
+  Stream<bool> get passwordRecoveryChanges async* {
+    if (_isPasswordSetupUri(Uri.base)) yield true;
+    yield* client.auth.onAuthStateChange
+        .where(
+          (event) =>
+              event.event == AuthChangeEvent.passwordRecovery ||
+              (event.event == AuthChangeEvent.signedIn &&
+                  _isPasswordSetupUri(Uri.base)),
+        )
+        .map((_) => true);
+  }
+
+  bool _isPasswordSetupUri(Uri uri) {
+    final type =
+        uri.queryParameters['type'] ??
+        Uri.splitQueryString(uri.fragment)['type'];
+    return type == 'recovery' || type == 'invite';
+  }
+
   @override
   Future<void> login(String email, String password) async {
     try {
@@ -30,7 +51,10 @@ class SupabaseAuthGateway implements AuthGateway {
   @override
   Future<void> recoverPassword(String email) async {
     try {
-      await client.auth.resetPasswordForEmail(email.trim());
+      await client.auth.resetPasswordForEmail(
+        email.trim(),
+        redirectTo: passwordRecoveryUrl,
+      );
     } on AuthException catch (error) {
       throw ApiFailure(
         error.message,
@@ -57,7 +81,7 @@ class SupabaseAuthGateway implements AuthGateway {
       final result = await client.auth.signUp(
         email: email.trim(),
         password: password,
-        data: {'name': name.trim()},
+        data: {'name': name.trim(), 'email_sender_name': 'Syscredi'},
       );
       if (result.session == null) {
         throw const ApiFailure(

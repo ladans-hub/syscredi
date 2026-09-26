@@ -2,6 +2,8 @@ import 'package:flutter/material.dart' hide Icons;
 import '../../../app/theme/fluent_icons_compat.dart';
 import '../../../app/theme/app_theme.dart';
 import '../../../app/theme/design_tokens.dart';
+import '../../settings/presentation/institution_branding.dart';
+import 'faq_dialog.dart';
 
 enum Area {
   dashboard,
@@ -20,11 +22,14 @@ enum Area {
   aml,
   users,
   backup,
+  plans,
   audit,
   faq,
   settings,
+  generalSettings,
   reconciliation,
   financialAnalysis,
+  creditFinancing,
   creditApproval,
   creditAuthorization,
   creditDisbursement,
@@ -50,11 +55,14 @@ extension AreaMeta on Area {
     Area.aml => 'Alertas AML',
     Area.users => 'Gerir utilizadores',
     Area.backup => 'Cópias de segurança',
+    Area.plans => 'Planos e Subscrições',
     Area.audit => 'Auditoria',
     Area.faq => 'Guia rápido',
     Area.settings => 'Definições',
+    Area.generalSettings => 'Definições gerais',
     Area.reconciliation => 'Conciliação bancária',
     Area.financialAnalysis => 'Análise financeira',
+    Area.creditFinancing => 'Financiamento',
     Area.creditApproval => 'Aprovar crédito',
     Area.creditAuthorization => 'Autorizar crédito',
     Area.creditDisbursement => 'Desembolso',
@@ -63,8 +71,12 @@ extension AreaMeta on Area {
   };
   IconData get icon => switch (this) {
     Area.dashboard => FluentSystemIcons.home,
+    Area.simulator => FluentSystemIcons.calculator,
+    Area.products => FluentSystemIcons.productCatalog,
     Area.clients => FluentSystemIcons.people,
-    Area.applications ||
+    Area.risk => FluentSystemIcons.shieldAlert,
+    Area.applications => FluentSystemIcons.documentApproval,
+    Area.creditFinancing => FluentSystemIcons.documentApproval,
     Area.creditApproval ||
     Area.creditAuthorization => FluentSystemIcons.document,
     Area.portfolio ||
@@ -72,7 +84,9 @@ extension AreaMeta on Area {
     Area.creditRestructuring => FluentSystemIcons.wallet,
     Area.collections || Area.creditDisbursement => FluentSystemIcons.payments,
     Area.reports => FluentSystemIcons.analytics,
+    Area.plans => FluentSystemIcons.subscriptions,
     Area.settings => FluentSystemIcons.settings,
+    Area.generalSettings => FluentSystemIcons.settings,
     _ => FluentSystemIcons.apps,
   };
 }
@@ -80,23 +94,44 @@ extension AreaMeta on Area {
 class SideBar extends StatelessWidget {
   const SideBar({
     required this.area,
+    required this.activeRoute,
     required this.onTap,
     required this.onSubmenu,
+    this.subscriptionSubtitle,
+    this.subscriptionPackage,
     super.key,
   });
   final Area area;
+  final String activeRoute;
   final ValueChanged<Area> onTap;
   final ValueChanged<String> onSubmenu;
+  final String? subscriptionSubtitle;
+  final String? subscriptionPackage;
   @override
-  Widget build(BuildContext context) => Container(
-    width: FluentTokens.navigationWidth,
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: Listenable.merge([brandPalette, brandVisuals]),
+    builder: (context, _) => _sidebar(context),
+  );
+
+  Widget _sidebar(BuildContext context) => Container(
+    width: brandVisuals.value.compactSidebar
+        ? 240
+        : FluentTokens.navigationWidth,
     decoration: BoxDecoration(
       gradient: LinearGradient(
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
         colors: [
-          brandVisuals.value.heroGradientStart,
-          brandVisuals.value.heroGradientEnd,
+          Color.lerp(
+            brandVisuals.value.heroGradientStart,
+            brandPalette.value.primary,
+            .32,
+          )!,
+          Color.lerp(
+            brandVisuals.value.heroGradientEnd,
+            brandPalette.value.secondary,
+            .32,
+          )!,
         ],
       ),
     ),
@@ -119,18 +154,20 @@ class SideBar extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        'SysCredi',
+                      InstitutionNameText(
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          fontSize: 26,
+                          fontSize: 20,
                           color: Colors.white,
                           fontWeight: FontWeight.w700,
                           letterSpacing: -.6,
                         ),
                       ),
-                      Text(
-                        'Microcrédito, grandes histórias',
+                      InstitutionBioText(
                         style: TextStyle(color: Color(0xFFB9C7D5), fontSize: 9),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ],
                   ),
@@ -144,12 +181,16 @@ class SideBar extends StatelessWidget {
               children: [
                 for (final a in [
                   Area.dashboard,
-                  Area.applications,
                   Area.portfolio,
                   Area.collections,
                 ])
                   item(a),
-                group('Etapas do crédito', FluentSystemIcons.document, [
+                group('Etapas do crédito', FluentSystemIcons.flowChart, [
+                  subItem(
+                    'Financiamento',
+                    FluentSystemIcons.documentApproval,
+                    Area.creditFinancing,
+                  ),
                   subItem(
                     'Análise financeira',
                     FluentSystemIcons.analytics,
@@ -191,7 +232,32 @@ class SideBar extends StatelessWidget {
                     Area.clients,
                   ),
                 ]),
-                item(Area.reports),
+                group('Relatórios', FluentSystemIcons.analytics, [
+                  subItem(
+                    'Exportações',
+                    FluentSystemIcons.table_view_outlined,
+                    Area.reports,
+                  ),
+                  subItem(
+                    'Registos',
+                    FluentSystemIcons.receipt_long_outlined,
+                    Area.reports,
+                  ),
+                  subItem('Cartas', FluentSystemIcons.mail, Area.reports),
+                  subItem(
+                    'Carta para BM',
+                    FluentSystemIcons.calendar,
+                    Area.reports,
+                  ),
+                  subItem('Créditos', FluentSystemIcons.wallet, Area.reports),
+                  subItem('Clientes', FluentSystemIcons.people, Area.reports),
+                  subItem(
+                    'Financeiros',
+                    FluentSystemIcons.analytics,
+                    Area.reports,
+                  ),
+                  subItem('Diversos', FluentSystemIcons.apps, Area.reports),
+                ]),
                 const Padding(
                   padding: EdgeInsets.fromLTRB(16, 20, 12, 10),
                   child: Text(
@@ -203,34 +269,41 @@ class SideBar extends StatelessWidget {
                     ),
                   ),
                 ),
-                for (final a in [Area.simulator, Area.products, Area.risk])
-                  item(a),
+                for (final a in [Area.simulator, Area.risk]) item(a),
                 group('Financeiro', FluentSystemIcons.payments, [
+                  subItem('Saldos', FluentSystemIcons.wallet, Area.accounts),
+                  subItem('Estornos', FluentSystemIcons.refresh, Area.accounts),
                   subItem(
-                    'Saldos e contas',
-                    FluentSystemIcons.wallet,
+                    'Receitas',
+                    FluentSystemIcons.analytics,
                     Area.accounts,
                   ),
                   subItem(
-                    'Movimentos de caixa',
-                    FluentSystemIcons.sync,
-                    Area.treasury,
+                    'Despesas',
+                    FluentSystemIcons.analytics,
+                    Area.accounts,
                   ),
                   subItem(
-                    'Conciliação bancária',
-                    FluentSystemIcons.check,
-                    Area.reconciliation,
+                    'Desembolsos',
+                    FluentSystemIcons.payments,
+                    Area.accounts,
                   ),
                   subItem(
-                    'Estornos',
-                    FluentSystemIcons.refresh,
-                    Area.portfolio,
+                    'Reembolsos',
+                    FluentSystemIcons.receipt_long_outlined,
+                    Area.accounts,
                   ),
+                  subItem(
+                    'Prestações Vencidas',
+                    FluentSystemIcons.warning,
+                    Area.accounts,
+                  ),
+                  subItem('Ativos', FluentSystemIcons.wallet, Area.accounts),
                 ]),
                 group('Parametrização', FluentSystemIcons.settings, [
                   subItem(
                     'Produtos de crédito',
-                    FluentSystemIcons.apps,
+                    FluentSystemIcons.productCatalog,
                     Area.products,
                   ),
                   subItem(
@@ -242,7 +315,7 @@ class SideBar extends StatelessWidget {
                 group('Gestão de logs', FluentSystemIcons.lock, [
                   subItem('Auditoria', FluentSystemIcons.history, Area.audit),
                 ]),
-                group('Administração', FluentSystemIcons.settings, [
+                group('Administração', FluentSystemIcons.admin, [
                   subItem(
                     'Contabilidade',
                     FluentSystemIcons.document,
@@ -261,9 +334,8 @@ class SideBar extends StatelessWidget {
                     Area.backup,
                   ),
                 ]),
-                group('Instruções do sistema', FluentSystemIcons.help, [
-                  subItem('Guia rápido', FluentSystemIcons.help, Area.faq),
-                ]),
+                item(Area.plans),
+                item(Area.generalSettings),
               ],
             ),
           ),
@@ -307,25 +379,9 @@ class SideBar extends StatelessWidget {
                           borderRadius: BorderRadius.circular(7),
                         ),
                       ),
-                      onPressed: () => showDialog<void>(
-                        context: context,
-                        builder: (c) => AlertDialog(
-                          title: const Text('Como trabalhar no SysCredi'),
-                          content: const SingleChildScrollView(
-                            child: Text(
-                              '1. Registe o cliente e verifique a identidade.\n\n2. Configure os produtos e simule as condições.\n\n3. Crie um pedido e avance pela análise e comité.\n\n4. Abra o pedido aprovado para registar o desembolso.\n\n5. Consulte o contrato e receba prestações em Cobranças.\n\n6. Acompanhe tesouraria, relatórios e auditoria. Consulte a auditoria e os relatórios no servidor.',
-                            ),
-                          ),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.pop(c),
-                              child: const Text('Entendido'),
-                            ),
-                          ],
-                        ),
-                      ),
+                      onPressed: () => showHelpCenter(context),
                       child: const Text(
-                        'Ver guia rápido',
+                        'Consultar FAQ',
                         style: TextStyle(fontSize: 12),
                       ),
                     ),
@@ -342,33 +398,90 @@ class SideBar extends StatelessWidget {
     padding: const EdgeInsets.only(bottom: 5),
     child: Material(
       color: area == a
-          ? Colors.white.withValues(alpha: .16)
+          ? brandPalette.value.primary.withValues(alpha: .30)
           : Colors.transparent,
       borderRadius: BorderRadius.circular(9),
       child: ListTile(
         dense: true,
         minLeadingWidth: 22,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 2),
-        leading: Icon(
-          a == Area.dashboard ? Icons.home_outlined : a.icon,
-          size: 24,
-          color: Colors.white,
+        contentPadding: EdgeInsets.symmetric(
+          horizontal: 15,
+          vertical: a == Area.plans ? 4 : 2,
         ),
+        leading: !brandVisuals.value.navigationIcons
+            ? null
+            : Icon(
+                a == Area.dashboard ? Icons.home_outlined : a.icon,
+                size: 24,
+                color: Colors.white,
+              ),
         title: Text(
           a == Area.dashboard ? 'Início' : a.label,
           style: const TextStyle(color: Colors.white, fontSize: 14),
         ),
+        subtitle: a == Area.plans && subscriptionSubtitle != null
+            ? Padding(
+                padding: const EdgeInsets.only(top: 3),
+                child: Row(
+                  children: [
+                    Flexible(
+                      child: Text.rich(
+                        _subscriptionSubtitleSpan(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    if (subscriptionPackage != null) ...[
+                      const SizedBox(width: 6),
+                      _SubscriptionPackageChip(package: subscriptionPackage!),
+                    ],
+                  ],
+                ),
+              )
+            : null,
         onTap: () => onTap(a),
       ),
     ),
   );
+
+  TextSpan _subscriptionSubtitleSpan() {
+    final subtitle = subscriptionSubtitle!;
+    const prefix = 'Plano atual: ';
+    if (subscriptionPackage == null || !subtitle.startsWith(prefix)) {
+      return TextSpan(
+        text: subtitle,
+        style: const TextStyle(color: Color(0xFFBBD3C7)),
+      );
+    }
+    return TextSpan(
+      children: [
+        TextSpan(
+          text: prefix,
+          style: TextStyle(color: brandPalette.value.primary),
+        ),
+        TextSpan(
+          text: subtitle.substring(prefix.length),
+          style: TextStyle(
+            color: _subscriptionPackageForeground(subscriptionPackage!),
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ],
+    );
+  }
 
   Widget group(String title, IconData icon, List<Widget> children) => Theme(
     data: ThemeData(dividerColor: Colors.transparent),
     child: ExpansionTile(
       tilePadding: const EdgeInsets.symmetric(horizontal: 15),
       childrenPadding: const EdgeInsets.only(left: 24),
-      leading: Icon(icon, size: 24, color: Colors.white),
+      leading: !brandVisuals.value.navigationIcons
+          ? null
+          : Icon(icon, size: 24, color: Colors.white),
       iconColor: Colors.white,
       collapsedIconColor: Colors.white,
       title: Text(
@@ -379,30 +492,168 @@ class SideBar extends StatelessWidget {
     ),
   );
 
-  Widget subItem(String title, IconData icon, Area target) => ListTile(
-    dense: true,
-    leading: Icon(icon, size: 20, color: const Color(0xFFB9C7D5)),
-    title: Text(
-      title,
-      style: const TextStyle(color: Color(0xFFB9C7D5), fontSize: 13),
-    ),
-    onTap: () {
-      if (title == 'Indivíduos' ||
-          title == 'Empresas' ||
-          title == 'Avalistas' ||
-          title == 'Co-assinantes' ||
-          title == 'Estornos' ||
-          title == 'Receitas' ||
-          title == 'Despesas' ||
-          title == 'Desembolsos' ||
-          title == 'Reembolsos') {
-        onSubmenu(title);
-      } else {
-        onTap(target);
-      }
+  Widget subItem(String title, IconData icon, Area target) {
+    final selected = _routeForSubmenu(title, target) == activeRoute;
+    final foreground = selected ? Colors.white : const Color(0xFFB9C7D5);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 3),
+      child: Material(
+        color: selected
+            ? brandPalette.value.primary.withValues(alpha: .30)
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(9),
+        child: ListTile(
+          dense: true,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
+          leading: !brandVisuals.value.navigationIcons
+              ? null
+              : Icon(icon, size: 20, color: foreground),
+          title: Text(
+            title,
+            style: TextStyle(
+              color: foreground,
+              fontSize: 13,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.normal,
+            ),
+          ),
+          trailing: selected
+              ? const Icon(Icons.check, size: 17, color: Colors.white)
+              : null,
+          onTap: () {
+            if (title == 'Indivíduos' ||
+                title == 'Empresas' ||
+                title == 'Avalistas' ||
+                title == 'Co-assinantes' ||
+                title == 'Estornos' ||
+                title == 'Receitas' ||
+                title == 'Despesas' ||
+                title == 'Desembolsos' ||
+                title == 'Reembolsos' ||
+                title == 'Saldos' ||
+                title == 'Prestações Vencidas' ||
+                title == 'Ativos' ||
+                title == 'Desembolsos' ||
+                title == 'Receitas' ||
+                title == 'Despesas' ||
+                title == 'Exportações' ||
+                title == 'Registos' ||
+                title == 'Cartas' ||
+                title == 'Carta para BM' ||
+                title == 'Créditos' ||
+                title == 'Clientes' ||
+                title == 'Financeiros' ||
+                title == 'Diversos') {
+              onSubmenu(title);
+            } else {
+              onTap(target);
+            }
+          },
+        ),
+      ),
+    );
+  }
+
+  String _routeForSubmenu(String title, Area target) => switch (title) {
+    'Indivíduos' => 'clients',
+    'Empresas' => 'businesses',
+    'Avalistas' => 'client-guarantors',
+    'Co-assinantes' => 'co-signers',
+    'Exportações' => 'report-exports',
+    'Registos' => 'report-records',
+    'Cartas' => 'report-letters',
+    'Carta para BM' => 'report-bm',
+    'Créditos' => 'report-credits',
+    'Clientes' => 'report-clients',
+    'Financeiros' => 'report-financial',
+    'Diversos' => 'report-misc',
+    'Saldos' => 'finance-balances',
+    'Estornos' => 'finance-reversals',
+    'Receitas' => 'finance-income',
+    'Despesas' => 'finance-expenses',
+    'Desembolsos' =>
+      target == Area.creditDisbursement
+          ? 'credit-disbursement'
+          : 'finance-disbursements',
+    'Reembolsos' => 'finance-refunds',
+    'Prestações Vencidas' => 'finance-overdue',
+    'Ativos' => 'finance-assets',
+    'Produtos de crédito' => 'products',
+    'Definições institucionais' => 'organization-settings',
+    'Definições gerais' => 'general-settings',
+    'Auditoria' => 'audit',
+    'Contabilidade' => 'admin-accounting',
+    'Sincronização' => 'admin-sync',
+    'Alertas AML' => 'admin-aml',
+    'Gerir utilizadores' => 'admin-users',
+    'Cópias de segurança' => 'admin-backup',
+    _ => switch (target) {
+      Area.creditFinancing => 'financing',
+      Area.financialAnalysis => 'financial-analysis',
+      Area.creditApproval => 'credit-approval',
+      Area.creditAuthorization => 'credit-authorization',
+      Area.creditDisbursement => 'credit-disbursement',
+      Area.creditStatus => 'credit-status',
+      Area.creditRestructuring => 'credit-restructuring',
+      _ => '',
     },
-  );
+  };
 }
+
+class _SubscriptionPackageChip extends StatelessWidget {
+  const _SubscriptionPackageChip({required this.package});
+
+  final String package;
+
+  @override
+  Widget build(BuildContext context) {
+    final normalized = package.toLowerCase();
+    final (label, foreground, background, border) = switch (normalized) {
+      'premium' => (
+        'Premium',
+        _subscriptionPackageForeground(normalized),
+        const Color(0xFF8A6400).withValues(alpha: .52),
+        const Color(0xFFC49322).withValues(alpha: .72),
+      ),
+      'pro' => (
+        'Pro',
+        _subscriptionPackageForeground(normalized),
+        brandPalette.value.primary.withValues(alpha: .24),
+        brandPalette.value.primary.withValues(alpha: .72),
+      ),
+      _ => (
+        'Básico',
+        _subscriptionPackageForeground(normalized),
+        const Color(0xFF6F7A82).withValues(alpha: .34),
+        const Color(0xFFB7C0C6).withValues(alpha: .62),
+      ),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: border),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: foreground,
+          fontSize: 9,
+          height: 1.15,
+          fontWeight: FontWeight.w800,
+          letterSpacing: .15,
+        ),
+      ),
+    );
+  }
+}
+
+Color _subscriptionPackageForeground(String package) =>
+    switch (package.toLowerCase()) {
+      'premium' => const Color(0xFFC49322),
+      'pro' => brandPalette.value.primary,
+      _ => const Color(0xFFB7C0C6),
+    };
 
 Future<void> showThemeModeMenu(
   BuildContext context,
@@ -614,9 +865,11 @@ class AccountMenuItem extends StatelessWidget {
             width: 48,
             height: 48,
             decoration: BoxDecoration(
-              color: (danger ? Colors.redAccent : color ?? green).withValues(
-                alpha: .10,
-              ),
+              color:
+                  (danger
+                          ? Colors.redAccent
+                          : color ?? brandPalette.value.primary)
+                      .withValues(alpha: .10),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(
@@ -624,7 +877,7 @@ class AccountMenuItem extends StatelessWidget {
               size: 25,
               color: danger
                   ? Colors.redAccent
-                  : color ?? const Color(0xFF3C6574),
+                  : color ?? brandPalette.value.primary,
             ),
           ),
           const SizedBox(width: 13),

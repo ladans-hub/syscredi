@@ -15,5 +15,10 @@ int moneyInput(String value) {
 
 String money(dynamic value) {
   final cents = intValue(value ?? 0), positive = intValue(value ?? 0).abs();
-  return '${cents < 0 ? '-' : ''}${positive ~/ 100},${(positive % 100).toString().padLeft(2, '0')} MT';
+  final whole = (positive ~/ 100).toString();
+  final groups = <String>[];
+  for (var end = whole.length; end > 0; end -= 3) {
+    groups.insert(0, whole.substring((end - 3).clamp(0, end), end));
+  }
+  return '${cents < 0 ? '-' : ''}${groups.join(' ')},${(positive % 100).toString().padLeft(2, '0')} MT';
 }

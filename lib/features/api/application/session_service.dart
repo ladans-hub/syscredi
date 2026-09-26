@@ -2,7 +2,8 @@ import 'dart:async';
 import '../domain/repository.dart';
 
 class SessionService {
-  SessionService(this.auth, this.repository) {
+  SessionService(this.auth, this.repository, {Repository? guestRepository})
+    : _guestRepository = guestRepository {
     _subscription = auth.sessionChanges.listen(
       (valid) {
         if (!valid) {
@@ -16,13 +17,23 @@ class SessionService {
         _changes.add(null);
       },
     );
+    _passwordRecoverySubscription = auth.passwordRecoveryChanges.listen((_) {
+      passwordRecovery = true;
+      profile = null;
+      _changes.add(null);
+    });
   }
   final AuthGateway auth;
   final Repository repository;
+  final Repository? _guestRepository;
+  Repository get activeRepository =>
+      profile?['guest'] == true ? (_guestRepository ?? repository) : repository;
   final _changes = StreamController<void>.broadcast(sync: true);
   StreamSubscription<bool>? _subscription;
+  StreamSubscription<bool>? _passwordRecoverySubscription;
   Stream<void> get changes => _changes.stream;
   Json? profile;
+  bool passwordRecovery = false;
   String? error;
   String? _registrationKey;
   static int _registrationSequence = 0;
@@ -41,7 +52,8 @@ class SessionService {
       'id': 'guest',
       'name': 'Visitante',
       'email': 'guest@syscredi.local',
-      'role': 'manager',
+      'role': 'operator',
+      'active': true,
       'guest': true,
     };
     _changes.add(null);
@@ -68,6 +80,10 @@ class SessionService {
       );
     }
     await auth.updatePassword(password.trim());
+    passwordRecovery = false;
+    await auth.logout();
+    profile = null;
+    _changes.add(null);
   }
 
   Future<void> register(
@@ -121,6 +137,7 @@ class SessionService {
   }
 
   Future<void> verify() async {
+    if (profile?['guest'] == true) return;
     try {
       final current = Map<String, dynamic>.from(await repository.get('/me'));
       if (!['operator', 'analyst', 'manager'].contains(current['role']) ||
@@ -144,13 +161,14 @@ class SessionService {
   }
 
   Future<void> logout() async {
-    await auth.logout();
+    if (profile?['guest'] != true) await auth.logout();
     profile = null;
     _changes.add(null);
   }
 
   Future<void> dispose() async {
     await _subscription?.cancel();
+    await _passwordRecoverySubscription?.cancel();
     repository.close();
     await _changes.close();
   }
