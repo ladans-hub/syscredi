@@ -390,6 +390,17 @@ class SideBar extends StatelessWidget {
               ),
             ),
           ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(24, 0, 24, 18),
+            child: Text(
+              'Syscredi · versão 1.0.0 (build 1)',
+              style: TextStyle(
+                color: Color(0xFF8CA3B8),
+                fontSize: 10,
+                letterSpacing: .2,
+              ),
+            ),
+          ),
         ],
       ),
     ),
