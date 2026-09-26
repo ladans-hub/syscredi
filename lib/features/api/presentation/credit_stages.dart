@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart' hide Icons;
 
 import '../../../app/theme/design_tokens.dart';
 import '../../../app/theme/app_theme.dart';
 import '../../../app/theme/fluent_icons_compat.dart';
 import '../../../core/widgets/operation_feedback.dart';
+import '../domain/money.dart';
 import '../domain/repository.dart';
 
 /// Operações de crédito agrupadas por etapa do ciclo de vida.
@@ -12,10 +15,12 @@ class CreditStagesView extends StatefulWidget {
   const CreditStagesView({
     required this.stage,
     required this.repository,
+    this.role = 'manager',
     super.key,
   });
   final String stage;
   final Repository repository;
+  final String role;
 
   @override
   State<CreditStagesView> createState() => _CreditStagesViewState();
@@ -29,6 +34,7 @@ class _CreditStagesViewState extends State<CreditStagesView> {
   final Map<String, String> _clientIds = {};
   final List<Map<String, dynamic>> _products = [];
   final List<_CreditCase> _cases = [];
+  final TextEditingController _searchController = TextEditingController();
   String filter = 'Todos';
   String query = '';
   _CreditCase? selected;
@@ -48,8 +54,21 @@ class _CreditStagesViewState extends State<CreditStagesView> {
     if (oldWidget.stage != widget.stage) _load();
   }
 
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _clearFilters() {
+    _searchController.clear();
+    query = '';
+    filter = 'Todos';
+  }
+
   Future<void> _load() async {
     final initialLoad = _cases.isEmpty;
+    final selectedId = selected?.id;
     setState(() {
       loading = initialLoad;
       refreshing = !initialLoad;
@@ -65,7 +84,9 @@ class _CreditStagesViewState extends State<CreditStagesView> {
           loans ? '/loans?limit=100&offset=0' : '/requests?limit=100&offset=0',
         ),
         widget.repository.get('/clients?limit=100&offset=0'),
-        widget.repository.get('/requests?limit=100&offset=0'),
+        widget.repository.get(
+          loans ? '/loans?limit=100&offset=0' : '/requests?limit=100&offset=0',
+        ),
         widget.repository.get('/users?limit=100&offset=0'),
         widget.repository.get('/payment-accounts'),
         widget.repository.get('/products?limit=100&offset=0'),
@@ -73,20 +94,28 @@ class _CreditStagesViewState extends State<CreditStagesView> {
       final data = results[0];
       if (!mounted) return;
       setState(() {
-        _cases
-          ..clear()
-          ..addAll(
-            (data as List).map(
+        final loadedCases = (data as List)
+            .map(
               (row) => _CreditCase.fromJson(
                 Map<String, dynamic>.from(row as Map),
                 loan: loans,
               ),
-            ),
+            )
+            .where((item) => _isEligibleForStage(widget.stage, item.rawStage));
+        _cases
+          ..clear()
+          ..addAll(loadedCases);
+        if (selectedId != null) {
+          selected = _cases.cast<_CreditCase?>().firstWhere(
+            (item) => item?.id == selectedId,
+            orElse: () => null,
           );
+        }
         _clients
           ..clear()
           ..addAll(
             (results[1] as List)
+                .where((row) => _clientIdentifier(row as Map).isNotEmpty)
                 .map((row) => '${(row as Map)['name'] ?? ''}'.trim())
                 .where((name) => name.isNotEmpty),
           );
@@ -98,7 +127,7 @@ class _CreditStagesViewState extends State<CreditStagesView> {
                   final value = row as Map;
                   return MapEntry(
                     '${value['name'] ?? ''}'.trim(),
-                    '${value['id'] ?? ''}',
+                    _clientIdentifier(value),
                   );
                 })
                 .where(
@@ -108,14 +137,11 @@ class _CreditStagesViewState extends State<CreditStagesView> {
         _processes
           ..clear()
           ..addAll(
-            (results[2] as List)
-                .map((row) {
-                  final value = row as Map;
-                  final reference = '${value['number'] ?? value['id'] ?? ''}';
-                  final client = '${value['client_name'] ?? ''}'.trim();
-                  return client.isEmpty ? reference : '$reference · $client';
-                })
-                .where((value) => value.isNotEmpty),
+            _cases.map(
+              (item) => item.client.isEmpty
+                  ? item.reference
+                  : '${item.reference} · ${item.client}',
+            ),
           );
         _authorizers
           ..clear()
@@ -132,10 +158,10 @@ class _CreditStagesViewState extends State<CreditStagesView> {
         _accounts
           ..clear()
           ..addEntries(
-            (results[4] as List)
+            _rows(results[4])
                 .map((row) {
                   final value = row as Map;
-                  final id = '${value['id'] ?? ''}';
+                  final id = _recordIdentifier(value);
                   final name = '${value['name'] ?? ''}'.trim();
                   final currency = '${value['currency'] ?? ''}'.trim();
                   return MapEntry(
@@ -166,6 +192,42 @@ class _CreditStagesViewState extends State<CreditStagesView> {
   }
 
   _StageMeta get meta => _stageMeta[widget.stage] ?? _stageMeta['financing']!;
+
+  static bool _isEligibleForStage(String viewStage, String processStage) =>
+      switch (viewStage) {
+        'financing' => processStage == 'documentation',
+        'financial-analysis' => [
+          'documentation',
+          'analysis',
+        ].contains(processStage),
+        'credit-approval' => processStage == 'committee',
+        'credit-authorization' => processStage == 'approved',
+        'credit-disbursement' => processStage == 'approved',
+        'credit-status' => ![
+          'paid',
+          'cancelled',
+          'archived',
+        ].contains(processStage),
+        'credit-restructuring' => ['active', 'overdue'].contains(processStage),
+        _ => true,
+      };
+
+  List<_CreditCase> get _disbursementEligibleCases => _cases
+      .where((item) => item.rawStage == 'approved')
+      .toList(growable: false);
+
+  List<String> get _stageProcesses {
+    final cases = widget.stage == 'credit-disbursement'
+        ? _disbursementEligibleCases
+        : _cases;
+    return cases
+        .map(
+          (item) => item.client.isEmpty
+              ? item.reference
+              : '${item.reference} · ${item.client}',
+        )
+        .toList(growable: false);
+  }
 
   List<_CreditCase> get visible => _cases.where((item) {
     final matchesFilter = filter == 'Todos' || item.status == filter;
@@ -274,7 +336,7 @@ class _CreditStagesViewState extends State<CreditStagesView> {
         _metric(
           context,
           'Montante em fluxo',
-          '${amount.toStringAsFixed(0)} MT',
+          money((amount * 100).round()),
           FluentSystemIcons.wallet,
           scheme.secondary,
         ),
@@ -304,13 +366,25 @@ class _CreditStagesViewState extends State<CreditStagesView> {
           children: [
             Icon(icon, color: color, size: 21),
             const SizedBox(width: 12),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label, style: Theme.of(context).textTheme.bodySmall),
-                const SizedBox(height: 3),
-                Text(value, style: Theme.of(context).textTheme.titleLarge),
-              ],
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    value,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                ],
+              ),
             ),
           ],
         ),
@@ -332,6 +406,7 @@ class _CreditStagesViewState extends State<CreditStagesView> {
               SizedBox(
                 width: 250,
                 child: TextField(
+                  controller: _searchController,
                   decoration: const InputDecoration(
                     labelText: 'Pesquisar cliente ou referência',
                     prefixIcon: Icon(Icons.search),
@@ -343,6 +418,7 @@ class _CreditStagesViewState extends State<CreditStagesView> {
                 width: 220,
                 child: DropdownButtonFormField<String>(
                   initialValue: filter,
+                  isExpanded: true,
                   decoration: const InputDecoration(labelText: 'Estado'),
                   items: [
                     for (final value in ['Todos', ...meta.statuses])
@@ -353,10 +429,7 @@ class _CreditStagesViewState extends State<CreditStagesView> {
                 ),
               ),
               OutlinedButton.icon(
-                onPressed: () => setState(() {
-                  query = '';
-                  filter = 'Todos';
-                }),
+                onPressed: () => setState(_clearFilters),
                 icon: const Icon(Icons.refresh),
                 label: const Text('Limpar filtros'),
               ),
@@ -370,17 +443,10 @@ class _CreditStagesViewState extends State<CreditStagesView> {
           const SizedBox(height: 18),
           if (refreshing) const LinearProgressIndicator(),
           if (loading && _cases.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(28),
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    SyscrediProgressIndicator(size: 42),
-                    SizedBox(height: 16),
-                    Text('A carregar processos de crédito…'),
-                  ],
-                ),
+            const SizedBox(
+              height: 220,
+              child: CenteredLoadingState(
+                message: 'A carregar processos de crédito…',
               ),
             )
           else if (visible.isEmpty)
@@ -453,6 +519,7 @@ class _CreditStagesViewState extends State<CreditStagesView> {
                 SizedBox(
                   width: 270,
                   child: TextField(
+                    controller: _searchController,
                     decoration: const InputDecoration(
                       labelText: 'Pesquisar cliente ou contrato',
                       prefixIcon: Icon(Icons.search),
@@ -461,10 +528,7 @@ class _CreditStagesViewState extends State<CreditStagesView> {
                   ),
                 ),
                 OutlinedButton.icon(
-                  onPressed: () => setState(() {
-                    filter = 'Todos';
-                    query = '';
-                  }),
+                  onPressed: () => setState(_clearFilters),
                   icon: const Icon(Icons.refresh),
                   label: const Text('Limpar'),
                 ),
@@ -498,7 +562,7 @@ class _CreditStagesViewState extends State<CreditStagesView> {
                             style: const TextStyle(fontWeight: FontWeight.w700),
                           ),
                         ),
-                        DataCell(Text('${item.amount.toStringAsFixed(2)} MT')),
+                        DataCell(Text(money((item.amount * 100).round()))),
                         DataCell(
                           Text(item.status == 'Concluído' ? '1 / 1' : '0 / 1'),
                         ),
@@ -555,7 +619,7 @@ class _CreditStagesViewState extends State<CreditStagesView> {
             ),
           ),
           DataCell(Text(item.client)),
-          DataCell(Text('${item.amount.toStringAsFixed(2)} MT')),
+          DataCell(Text(money((item.amount * 100).round()))),
           DataCell(Text('${item.term} meses')),
           DataCell(Text(item.owner)),
           DataCell(_status(item.status, item.attention, scheme)),
@@ -573,23 +637,11 @@ class _CreditStagesViewState extends State<CreditStagesView> {
                   onPressed: () => _openEditor(context, item),
                   icon: const Icon(Icons.edit),
                 ),
-                PopupMenuButton<String>(
-                  onSelected: (value) => _applyAction(item, value),
-                  itemBuilder: (_) => [
-                    const PopupMenuItem(
-                      value: 'advance',
-                      child: Text('Avançar etapa'),
-                    ),
-                    const PopupMenuItem(
-                      value: 'hold',
-                      child: Text('Colocar em revisão'),
-                    ),
-                    const PopupMenuItem(
-                      value: 'archive',
-                      child: Text('Arquivar processo'),
-                    ),
-                  ],
-                ),
+                if (_processActions(item).isNotEmpty)
+                  PopupMenuButton<String>(
+                    onSelected: (value) => _applyAction(item, value),
+                    itemBuilder: (_) => _processActions(item),
+                  ),
               ],
             ),
           ),
@@ -662,7 +714,7 @@ class _CreditStagesViewState extends State<CreditStagesView> {
             children: [
               _detail('Cliente', item.client),
               _detail('Produto', item.product),
-              _detail('Montante', '${item.amount.toStringAsFixed(2)} MT'),
+              _detail('Montante', money((item.amount * 100).round())),
               _detail('Prazo', '${item.term} meses'),
               _detail('Responsável', item.owner),
               _detail('Última actualização', item.updated),
@@ -700,11 +752,12 @@ class _CreditStagesViewState extends State<CreditStagesView> {
               spacing: 10,
               runSpacing: 10,
               children: [
-                FilledButton.icon(
-                  onPressed: () => _applyAction(item, 'advance'),
-                  icon: const Icon(Icons.arrow_forward_rounded),
-                  label: const Text('Avançar processo'),
-                ),
+                if (_canAdvance(item))
+                  FilledButton.icon(
+                    onPressed: () => _applyAction(item, 'advance'),
+                    icon: const Icon(Icons.arrow_forward_rounded),
+                    label: const Text('Avançar processo'),
+                  ),
                 if (widget.stage == 'credit-status') ...[
                   OutlinedButton.icon(
                     onPressed: () => _applyAction(item, 'malparado'),
@@ -715,11 +768,6 @@ class _CreditStagesViewState extends State<CreditStagesView> {
                     onPressed: () => _applyAction(item, 'revert'),
                     icon: const Icon(Icons.undo_outlined),
                     label: const Text('Reverter crédito'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: () => _applyAction(item, 'archive'),
-                    icon: const Icon(Icons.delete_sweep_outlined),
-                    label: const Text('Excluir'),
                   ),
                 ],
               ],
@@ -801,7 +849,7 @@ class _CreditStagesViewState extends State<CreditStagesView> {
     }
     final clientOptions = _clientIds.entries
         .map((entry) => (id: entry.value, name: entry.key))
-        .where((entry) => _isDatabaseUuid(entry.id))
+        .where((entry) => _isUuid(entry.id))
         .toList();
     if (clientOptions.isEmpty) {
       await showFeedbackDialog(
@@ -821,14 +869,43 @@ class _CreditStagesViewState extends State<CreditStagesView> {
           );
     var selectedClient = initialClient.name;
     var selectedClientId = initialClient.id;
+    final defaultProduct = _products.firstWhere((product) {
+      final name = '${product['name'] ?? ''}'.trim().toLowerCase();
+      final code = '${product['code'] ?? ''}'.trim().toLowerCase();
+      return name == 'crédito rápido' ||
+          name == 'credito rapido' ||
+          code.contains('rapido') ||
+          code.contains('rápido');
+    }, orElse: () => _products.first);
     var selectedProductId = item == null
-        ? '${_products.first['id'] ?? ''}'
+        ? '${defaultProduct['id'] ?? ''}'
         : '${_products.firstWhere((row) => '${row['name'] ?? ''}' == item.product, orElse: () => _products.first)['id'] ?? ''}';
+    Map<String, dynamic> selectedProduct() => _products.firstWhere(
+      (product) => '${product['id'] ?? ''}' == selectedProductId,
+      orElse: () => defaultProduct,
+    );
+    int productMonths(String key, {required int fallback}) =>
+        int.tryParse('${selectedProduct()[key] ?? fallback}') ?? fallback;
     final amount = TextEditingController(
       text: item?.amount.toStringAsFixed(2) ?? '12500',
     );
-    final term = TextEditingController(text: item?.term.toString() ?? '6');
+    final term = TextEditingController(
+      text:
+          item?.term.toString() ??
+          productMonths('min_months', fallback: 1).toString(),
+    );
     final notes = TextEditingController(text: item?.notes ?? '');
+    var shortTerm = false;
+    bool isQuickCredit() {
+      final product = selectedProduct();
+      final name = '${product['name'] ?? ''}'.toLowerCase();
+      final code = '${product['code'] ?? ''}'.toLowerCase();
+      return name.contains('crédito rápido') ||
+          name.contains('credito rapido') ||
+          code.contains('rapido') ||
+          code.contains('rápido');
+    }
+
     final formKey = GlobalKey<FormState>();
     final result = await showDialog<bool>(
       context: context,
@@ -847,8 +924,10 @@ class _CreditStagesViewState extends State<CreditStagesView> {
                   children: [
                     FormField<String>(
                       initialValue: selectedClientId,
-                      validator: (value) =>
-                          !clientOptions.any((entry) => entry.id == value)
+                      validator: (_) =>
+                          !clientOptions.any(
+                            (entry) => entry.id == selectedClientId,
+                          )
                           ? 'Seleccione um cliente válido.'
                           : null,
                       builder: (field) => InkWell(
@@ -966,13 +1045,49 @@ class _CreditStagesViewState extends State<CreditStagesView> {
                           ),
                       ],
                       onChanged: item == null
-                          ? (value) => selectedProductId = value ?? ''
+                          ? (value) {
+                              selectedProductId = value ?? '';
+                              term.text = productMonths(
+                                'min_months',
+                                fallback: 1,
+                              ).toString();
+                              shortTerm = false;
+                              dialogSetState(() {});
+                            }
                           : null,
                       validator: (value) => value == null || value.isEmpty
                           ? 'Seleccione o produto de crédito.'
                           : null,
                     ),
                     const SizedBox(height: 12),
+                    if (item == null && isQuickCredit()) ...[
+                      SegmentedButton<bool>(
+                        segments: const [
+                          ButtonSegment(
+                            value: false,
+                            label: Text('Meses'),
+                            icon: Icon(FluentSystemIcons.calendar),
+                          ),
+                          ButtonSegment(
+                            value: true,
+                            label: Text('Até 14 dias'),
+                            icon: Icon(FluentSystemIcons.pending),
+                          ),
+                        ],
+                        selected: {shortTerm},
+                        onSelectionChanged: (value) {
+                          shortTerm = value.first;
+                          term.text = shortTerm
+                              ? '14'
+                              : productMonths(
+                                  'min_months',
+                                  fallback: 1,
+                                ).toString();
+                          dialogSetState(() {});
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                    ],
                     Row(
                       children: [
                         Expanded(
@@ -991,13 +1106,34 @@ class _CreditStagesViewState extends State<CreditStagesView> {
                         Expanded(
                           child: TextFormField(
                             controller: term,
-                            decoration: const InputDecoration(
-                              labelText: 'Prazo (meses)',
+                            decoration: InputDecoration(
+                              labelText: shortTerm
+                                  ? 'Prazo (dias)'
+                                  : 'Prazo (meses)',
                             ),
                             keyboardType: TextInputType.number,
-                            validator: (v) => int.tryParse(v ?? '') == null
-                                ? 'Prazo inválido.'
-                                : null,
+                            validator: (v) {
+                              final value = int.tryParse(v ?? '');
+                              if (value == null) return 'Prazo inválido.';
+                              if (shortTerm) {
+                                if (value < 1 || value > 14) {
+                                  return 'Use um prazo entre 1 e 14 dias.';
+                                }
+                                return null;
+                              }
+                              final minMonths = productMonths(
+                                'min_months',
+                                fallback: 1,
+                              );
+                              final maxMonths = productMonths(
+                                'max_months',
+                                fallback: minMonths,
+                              );
+                              if (value < minMonths || value > maxMonths) {
+                                return 'Use um prazo entre $minMonths e $maxMonths meses.';
+                              }
+                              return null;
+                            },
                           ),
                         ),
                       ],
@@ -1037,7 +1173,8 @@ class _CreditStagesViewState extends State<CreditStagesView> {
     if (!mounted) return;
     try {
       final amountCents = (double.parse(amount.text) * 100).round();
-      final months = int.parse(term.text);
+      final termValue = int.parse(term.text);
+      final months = shortTerm ? 1 : termValue;
       if (item == null) {
         final validClient = clientOptions.any(
           (entry) => entry.id == selectedClientId,
@@ -1053,6 +1190,7 @@ class _CreditStagesViewState extends State<CreditStagesView> {
           'productId': selectedProductId,
           'amountCents': amountCents,
           'months': months,
+          if (shortTerm) 'termDays': termValue,
         });
       } else {
         final product = _products.firstWhere(
@@ -1063,16 +1201,16 @@ class _CreditStagesViewState extends State<CreditStagesView> {
         if (product.isEmpty) {
           throw const ApiFailure('Produto de crédito indisponível.');
         }
-        await widget.repository
-            .write('POST', '/requests/${item.id}/financing', {
-              'amountCents': amountCents,
-              'months': months,
-              'annualRateBps': product['annual_rate_bps'] ?? 0,
-              'paymentFrequency': product['payment_frequency'] ?? 'monthly',
-              'interestMethod': product['interest_method'] ?? 'flat',
-              if (notes.text.trim().isNotEmpty) 'conditions': notes.text.trim(),
-              'version': item.version,
-            });
+        final conditions = [
+          'Montante solicitado: $amountCents centavos',
+          'Prazo: $months meses',
+          if (notes.text.trim().isNotEmpty) notes.text.trim(),
+        ].join('\n');
+        await widget.repository.write('PATCH', '/requests/${item.id}/stage', {
+          'stage': item.rawStage.isEmpty ? 'documentation' : item.rawStage,
+          'reason': conditions,
+          'version': item.version,
+        });
       }
       await _load();
       if (context.mounted) {
@@ -1095,28 +1233,99 @@ class _CreditStagesViewState extends State<CreditStagesView> {
     }
   }
 
-  bool _isDatabaseUuid(String value) => RegExp(
+  static String _clientIdentifier(Map<dynamic, dynamic> row) {
+    return _recordIdentifier(
+      row,
+      keys: const ['client_id', 'clientId', 'uuid', 'id'],
+    );
+  }
+
+  static List<Map<dynamic, dynamic>> _rows(dynamic response) {
+    if (response is List) {
+      return response.whereType<Map>().toList(growable: false);
+    }
+    if (response is Map && response['data'] is List) {
+      return (response['data'] as List).whereType<Map>().toList(
+        growable: false,
+      );
+    }
+    return const [];
+  }
+
+  static String _recordIdentifier(
+    Map<dynamic, dynamic> row, {
+    List<String> keys = const [
+      'accountId',
+      'account_id',
+      'uuid',
+      'value',
+      'id',
+    ],
+  }) {
+    for (final key in keys) {
+      final raw = row[key];
+      final value = raw is Map
+          ? _recordIdentifier(raw, keys: keys)
+          : '${raw ?? ''}'.trim();
+      if (_isUuid(value)) return value;
+    }
+    for (final raw in row.values.whereType<Map>()) {
+      final value = _recordIdentifier(raw, keys: keys);
+      if (_isUuid(value)) return value;
+    }
+    return '';
+  }
+
+  static bool _isUuid(String value) => RegExp(
     r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
   ).hasMatch(value);
 
   Future<void> _openStageForm(BuildContext context, [_CreditCase? item]) async {
+    if (widget.stage == 'credit-disbursement' && _accounts.isEmpty) {
+      await showFeedbackDialog(
+        context,
+        title: 'Conta de desembolso indisponível',
+        message:
+            'O servidor não devolveu nenhuma conta de tesouraria válida. Configure uma conta de pagamento antes de efectuar o desembolso.',
+        success: false,
+      );
+      return;
+    }
     final specs = _stageFields(widget.stage, item);
+    final availableProcesses = _stageProcesses;
+    final controllers = <String, TextEditingController>{};
+    final selections = <String, String>{};
     var selectedClient =
         item?.client ?? (_clients.isEmpty ? '' : _clients.first);
     var selectedProcess = item == null
-        ? (_processes.isEmpty ? '' : _processes.first)
-        : _processes.firstWhere(
+        ? (availableProcesses.isEmpty ? '' : availableProcesses.first)
+        : availableProcesses.firstWhere(
             (value) => value.startsWith(item.reference),
             orElse: () => item.reference,
           );
+    _CreditCase? selectedCase() {
+      final reference = selectedProcess.split(' · ').first.trim();
+      return _cases.cast<_CreditCase?>().firstWhere(
+        (candidate) => candidate?.reference == reference,
+        orElse: () => item ?? selected,
+      );
+    }
+
+    void syncDisbursementCase() {
+      if (widget.stage != 'credit-disbursement') return;
+      final target = selectedCase();
+      if (target == null) return;
+      selectedClient = target.client;
+      controllers['amount']?.text = target.amount.toStringAsFixed(2);
+    }
+
     var selectedResponsible = _authorizers.isEmpty ? '' : _authorizers.first;
-    final controllers = <String, TextEditingController>{};
-    final selections = <String, String>{};
     for (final field in specs) {
       if (field.clientPicker ||
           field.processPicker ||
-          field.responsiblePicker ||
-          field.options != null) {
+          field.responsiblePicker) {
+        selections[field.key] = field.initial;
+      } else if (field.options != null) {
         selections[field.key] = field.initial.isNotEmpty
             ? field.initial
             : field.options!.keys.first;
@@ -1124,6 +1333,7 @@ class _CreditStagesViewState extends State<CreditStagesView> {
         controllers[field.key] = TextEditingController(text: field.initial);
       }
     }
+    syncDisbursementCase();
     final formKey = GlobalKey<FormState>();
     final saved = await showDialog<bool>(
       context: context,
@@ -1156,10 +1366,13 @@ class _CreditStagesViewState extends State<CreditStagesView> {
                         _searchableSelector(
                           dialogContext,
                           selectedProcess,
-                          _processes,
-                          'Processo / contrato',
+                          availableProcesses,
+                          widget.stage == 'credit-disbursement'
+                              ? 'Cliente apto / processo'
+                              : 'Processo / contrato',
                           (value) {
                             selectedProcess = value;
+                            syncDisbursementCase();
                             setDialogState(() {});
                           },
                         )
@@ -1200,6 +1413,9 @@ class _CreditStagesViewState extends State<CreditStagesView> {
                       else
                         TextFormField(
                           controller: controllers[field.key],
+                          readOnly:
+                              widget.stage == 'credit-disbursement' &&
+                              field.key == 'amount',
                           maxLines: field.multiline ? 3 : 1,
                           keyboardType: field.numeric
                               ? TextInputType.number
@@ -1209,7 +1425,8 @@ class _CreditStagesViewState extends State<CreditStagesView> {
                             alignLabelWithHint: field.multiline,
                           ),
                           validator: (value) =>
-                              value == null || value.trim().isEmpty
+                              !field.optional &&
+                                  (value == null || value.trim().isEmpty)
                               ? 'Preencha este campo.'
                               : null,
                         ),
@@ -1239,6 +1456,10 @@ class _CreditStagesViewState extends State<CreditStagesView> {
         ),
       ),
     );
+    final values = {
+      for (final entry in controllers.entries)
+        entry.key: entry.value.text.trim(),
+    };
     // The dialog route can still rebuild once during its closing animation.
     // Dispose after that frame so TextFormField never receives a dead
     // controller during the transition.
@@ -1248,33 +1469,70 @@ class _CreditStagesViewState extends State<CreditStagesView> {
       }
     });
     if (saved != true || !mounted) return;
+    var loadingVisible = true;
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (loadingContext) => PopScope(
+          canPop: false,
+          child: const AlertDialog(
+            content: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(strokeWidth: 2.5),
+                ),
+                SizedBox(width: 16),
+                Flexible(child: Text('A enviar a requisição…')),
+              ],
+            ),
+          ),
+        ),
+      ).whenComplete(() => loadingVisible = false),
+    );
     try {
-      final target = item ?? selected;
+      final selectedReference = selectedProcess.split(' · ').first.trim();
+      final target =
+          item ??
+          _cases.cast<_CreditCase?>().firstWhere(
+            (candidate) => candidate?.reference == selectedReference,
+            orElse: () => selected,
+          );
       if (target == null) {
         throw const ApiFailure('Seleccione um processo antes de continuar.');
+      }
+      if (!_isUuid(target.id)) {
+        throw const ApiFailure(
+          'O processo seleccionado não possui um identificador válido. Actualize a lista e seleccione-o novamente.',
+        );
       }
       switch (widget.stage) {
         case 'financial-analysis':
           int cents(String key) =>
-              ((double.tryParse(controllers[key]?.text ?? '') ?? 0) * 100)
-                  .round();
-          await widget.repository
-              .write('POST', '/requests/${target.id}/financial-analysis', {
-                'incomeCents': cents('income'),
-                'expensesCents': cents('expenses'),
-                'obligationsCents': cents('debt'),
-                'opinion': selections['opinion'] ?? 'conditional',
-                'creditHistory': controllers['history']?.text.trim() ?? '',
-                'guarantees': controllers['guarantees']?.text.trim() ?? '',
-                if ((controllers['notes']?.text.trim() ?? '').isNotEmpty)
-                  'notes': controllers['notes']!.text.trim(),
-                'version': target.version,
-              });
+              ((double.tryParse(values[key] ?? '') ?? 0) * 100).round();
+          final opinion = selections['opinion'] ?? 'conditional';
+          await widget.repository.write(
+            'POST',
+            '/requests/${target.id}/financial-analysis',
+            {
+              'incomeCents': cents('income'),
+              'expensesCents': cents('expenses'),
+              'obligationsCents': cents('debt'),
+              'opinion': opinion,
+              'creditHistory': values['history'] ?? '',
+              'guarantees': values['guarantees'] ?? '',
+              if ((values['notes'] ?? '').isNotEmpty) 'notes': values['notes'],
+              'version': target.version,
+            },
+          );
         case 'credit-approval':
           final decision = selections['decision'] == 'rejected'
               ? 'rejected'
               : 'approved';
-          final reason = controllers['conditions']?.text.trim() ?? '';
+          final reason = values['conditions'] ?? '';
           await widget.repository
               .write('PATCH', '/requests/${target.id}/stage', {
                 'stage': decision,
@@ -1283,7 +1541,7 @@ class _CreditStagesViewState extends State<CreditStagesView> {
               });
         case 'credit-authorization':
           final returned = selections['approval'] == 'returned';
-          final notes = controllers['notes']?.text.trim() ?? '';
+          final notes = values['notes'] ?? '';
           await widget.repository
               .write('POST', '/requests/${target.id}/authorization', {
                 'decision': returned ? 'returned' : 'authorized',
@@ -1292,20 +1550,69 @@ class _CreditStagesViewState extends State<CreditStagesView> {
               });
         case 'credit-disbursement':
           final accountId = selections['account'];
-          if (accountId == null || accountId.isEmpty) {
-            throw const ApiFailure('Seleccione uma conta de origem.');
+          if (accountId == null || !_isUuid(accountId)) {
+            throw const ApiFailure(
+              'A conta de origem seleccionada é inválida. Seleccione-a novamente.',
+            );
           }
           await widget.repository.write(
             'POST',
             '/requests/${target.id}/disburse',
             {'accountId': accountId},
           );
+        case 'credit-restructuring':
+          final term = int.tryParse(values['term'] ?? '') ?? 0;
+          final monthlyRate = double.tryParse(values['rate'] ?? '') ?? -1;
+          if (term < 1 || term > 360 || monthlyRate < 0) {
+            throw const ApiFailure(
+              'Introduza um prazo e uma taxa válidos para a reestruturação.',
+            );
+          }
+          final principalCents = (target.amount * 100).round();
+          if (principalCents < 1) {
+            throw const ApiFailure(
+              'O crédito seleccionado não possui capital válido.',
+            );
+          }
+          final frequency = selections['frequency'] ?? 'monthly';
+          final schedule = _restructuredSchedule(
+            principalCents: principalCents,
+            periods: term,
+            monthlyRate: monthlyRate,
+            frequency: frequency,
+          );
+          final reason = [
+            _restructuringReason(selections['reason']),
+            if ((values['justification'] ?? '').isNotEmpty)
+              values['justification']!,
+          ].join(' — ');
+          await widget.repository.write('POST', '/loan-adjustments', {
+            'loanId': target.id,
+            'reason': reason,
+            'previousSnapshot': {
+              'principalCents': principalCents,
+              'balanceCents': principalCents,
+              'months': target.term,
+              'status': target.rawStage,
+            },
+            'newSnapshot': {
+              'principalCents': principalCents,
+              'months': term,
+              'monthlyRate': monthlyRate,
+              'paymentFrequency': frequency,
+              'schedule': schedule,
+            },
+          });
         default:
           throw const ApiFailure(
             'Esta etapa ainda não possui persistência remota disponível.',
           );
       }
       await _load();
+      if (loadingVisible && context.mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        loadingVisible = false;
+      }
       if (context.mounted) {
         await showFeedbackDialog(
           context,
@@ -1315,6 +1622,10 @@ class _CreditStagesViewState extends State<CreditStagesView> {
         );
       }
     } catch (failure) {
+      if (loadingVisible && context.mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        loadingVisible = false;
+      }
       if (context.mounted) {
         await showFeedbackDialog(
           context,
@@ -1325,6 +1636,48 @@ class _CreditStagesViewState extends State<CreditStagesView> {
       }
     }
   }
+
+  List<Json> _restructuredSchedule({
+    required int principalCents,
+    required int periods,
+    required double monthlyRate,
+    required String frequency,
+  }) {
+    final basePrincipal = principalCents ~/ periods;
+    final remainder = principalCents % periods;
+    var remaining = principalCents;
+    final start = DateTime(2026, 9, 24);
+    return [
+      for (var index = 1; index <= periods; index++)
+        () {
+          final principal = basePrincipal + (index <= remainder ? 1 : 0);
+          final interest = (remaining * monthlyRate / 100).round();
+          remaining -= principal;
+          final dueDate = switch (frequency) {
+            'weekly' => start.add(Duration(days: index * 7)),
+            'biweekly' => start.add(Duration(days: index * 14)),
+            _ => DateTime(start.year, start.month + index, start.day),
+          };
+          return <String, dynamic>{
+            'number': index,
+            'dueDate': _dateOnly(dueDate),
+            'principalCents': principal,
+            'interestCents': interest,
+          };
+        }(),
+    ];
+  }
+
+  String _dateOnly(DateTime value) =>
+      '${value.year.toString().padLeft(4, '0')}-'
+      '${value.month.toString().padLeft(2, '0')}-'
+      '${value.day.toString().padLeft(2, '0')}';
+
+  String _restructuringReason(String? value) => switch (value) {
+    'term' => 'Ajuste de prazo',
+    'settlement' => 'Acordo de liquidação',
+    _ => 'Dificuldade temporária',
+  };
 
   Widget _clientSelector(
     BuildContext dialogContext,
@@ -1619,7 +1972,12 @@ class _CreditStagesViewState extends State<CreditStagesView> {
               'unfavourable': 'Desfavorável',
             },
           ),
-          _StageField('notes', 'Justificação técnica', multiline: true),
+          _StageField(
+            'notes',
+            'Justificação técnica',
+            multiline: true,
+            optional: true,
+          ),
         ];
       case 'credit-approval':
         return const [
@@ -1662,7 +2020,12 @@ class _CreditStagesViewState extends State<CreditStagesView> {
             initial: '2.50',
             numeric: true,
           ),
-          _StageField('conditions', 'Condições e deliberação', multiline: true),
+          _StageField(
+            'conditions',
+            'Condições e deliberação',
+            multiline: true,
+            optional: true,
+          ),
         ];
       case 'credit-authorization':
         return const [
@@ -1702,20 +2065,18 @@ class _CreditStagesViewState extends State<CreditStagesView> {
             initial: 'Gestor de Crédito',
             responsiblePicker: true,
           ),
-          _StageField('notes', 'Observações formais', multiline: true),
+          _StageField(
+            'notes',
+            'Observações formais',
+            multiline: true,
+            optional: true,
+          ),
         ];
       case 'credit-disbursement':
         return [
           const _StageField(
-            'client',
-            'Cliente',
-            initial: 'Adelino Armando de Sousa',
-            clientPicker: true,
-          ),
-          const _StageField(
             'contract',
-            'Contrato autorizado',
-            initial: 'CR-2026-0303',
+            'Cliente apto / processo aprovado',
             processPicker: true,
           ),
           _StageField('account', 'Conta de origem', options: _accounts),
@@ -1732,7 +2093,6 @@ class _CreditStagesViewState extends State<CreditStagesView> {
           const _StageField(
             'amount',
             'Montante a desembolsar (MT)',
-            initial: '12500',
             numeric: true,
           ),
           const _StageField(
@@ -1836,6 +2196,7 @@ class _CreditStagesViewState extends State<CreditStagesView> {
             'justification',
             'Justificação e acordo com o cliente',
             multiline: true,
+            optional: true,
           ),
         ];
       default:
@@ -1843,29 +2204,130 @@ class _CreditStagesViewState extends State<CreditStagesView> {
     }
   }
 
-  void _applyAction(_CreditCase item, String action) {
-    setState(() {
-      final index = _cases.indexOf(item);
-      if (index < 0) return;
-      final next = action == 'malparado'
-          ? 'Malparado'
-          : action == 'revert'
-          ? 'Vigente'
-          : action == 'archive'
-          ? 'Arquivado'
-          : action == 'hold'
-          ? 'Em revisão'
-          : 'Concluído';
-      _cases[index] = item.copyWith(
-        status: next,
-        attention: action == 'hold',
-        progress: action == 'advance'
-            ? (item.progress + 1).clamp(0, 4)
-            : item.progress,
-        updated: 'Agora',
+  List<PopupMenuEntry<String>> _processActions(_CreditCase item) => [
+    if (_canAdvance(item))
+      const PopupMenuItem(value: 'advance', child: Text('Avançar etapa')),
+    if (_canReject(item))
+      const PopupMenuItem(value: 'archive', child: Text('Arquivar processo')),
+  ];
+
+  bool _canAdvance(_CreditCase item) => switch (item.rawStage) {
+    'documentation' => [
+      'guarantor',
+      'analyst',
+      'manager',
+    ].contains(widget.role),
+    'analysis' || 'committee' => ['analyst', 'manager'].contains(widget.role),
+    _ => false,
+  };
+
+  bool _canReject(_CreditCase item) => switch (item.rawStage) {
+    'documentation' => [
+      'guarantor',
+      'analyst',
+      'manager',
+    ].contains(widget.role),
+    'analysis' || 'committee' => ['analyst', 'manager'].contains(widget.role),
+    _ => false,
+  };
+
+  Future<void> _applyAction(_CreditCase item, String action) async {
+    if (action == 'malparado' || action == 'revert') {
+      await showFeedbackDialog(
+        context,
+        title: 'Acção indisponível',
+        message:
+            'Esta alteração deve ser realizada pelo fluxo de gestão do crédito.',
+        kind: FeedbackKind.info,
       );
-      selected = _cases[index];
-    });
+      return;
+    }
+    final nextStage = action == 'archive'
+        ? 'rejected'
+        : switch (item.rawStage) {
+            'documentation' => 'analysis',
+            'analysis' => 'committee',
+            'committee' => 'approved',
+            _ => null,
+          };
+    if (nextStage == null) return;
+    final reason = action == 'archive'
+        ? await _archiveReason(item)
+        : 'Processo avançado pela operação ${meta.title.toLowerCase()}.';
+    if (reason == null) return;
+    try {
+      await widget.repository.write('PATCH', '/requests/${item.id}/stage', {
+        'stage': nextStage,
+        'reason': reason,
+        'version': item.version,
+      });
+      _clearFilters();
+      await _load();
+      if (mounted) {
+        await showFeedbackDialog(
+          context,
+          title: action == 'archive'
+              ? 'Processo arquivado'
+              : 'Processo avançado',
+          message: action == 'archive'
+              ? 'O processo foi encerrado e removido das filas operacionais.'
+              : 'A próxima etapa já recebeu o processo.',
+          success: true,
+        );
+      }
+    } catch (failure) {
+      if (mounted) {
+        await showFeedbackDialog(
+          context,
+          title: 'Não foi possível actualizar',
+          message: '$failure',
+          success: false,
+        );
+      }
+    }
+  }
+
+  Future<String?> _archiveReason(_CreditCase item) async {
+    final controller = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Arquivar processo?'),
+        content: Form(
+          key: formKey,
+          child: TextFormField(
+            controller: controller,
+            autofocus: true,
+            maxLines: 3,
+            decoration: InputDecoration(
+              labelText: 'Motivo',
+              helperText: item.reference,
+            ),
+            validator: (value) => (value?.trim().length ?? 0) < 3
+                ? 'Indique o motivo do arquivamento.'
+                : null,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (formKey.currentState!.validate()) {
+                Navigator.pop(dialogContext, true);
+              }
+            },
+            child: const Text('Arquivar'),
+          ),
+        ],
+      ),
+    );
+    final reason = confirmed == true ? controller.text.trim() : null;
+    Future<void>.delayed(const Duration(milliseconds: 400), controller.dispose);
+    return reason;
   }
 }
 
@@ -1895,17 +2357,17 @@ class _CreditCase {
   factory _CreditCase.fromJson(Map<String, dynamic> row, {required bool loan}) {
     final stage = '${row['stage'] ?? row['status'] ?? ''}';
     final progress = switch (stage) {
-      'documentation' => 1,
-      'analysis' => 2,
-      'committee' => 3,
+      'documentation' => 0,
+      'analysis' => 1,
+      'committee' => 2,
       'approved' => 4,
       'disbursed' || 'active' || 'paid' => 4,
       _ => 0,
     };
     final status = switch (stage) {
-      'documentation' => 'Novo',
+      'documentation' => 'Documentação',
       'analysis' => 'Em análise',
-      'committee' => 'Em revisão',
+      'committee' => 'Em comité',
       'approved' => 'Aprovado',
       'rejected' => 'Recusado',
       'disbursed' => 'Concluído',
@@ -1920,7 +2382,17 @@ class _CreditCase {
         ) ??
         0;
     return _CreditCase(
-      '${row['id'] ?? ''}',
+      _CreditStagesViewState._recordIdentifier(
+        row,
+        keys: const [
+          'request_id',
+          'requestId',
+          'credit_request_id',
+          'creditRequestId',
+          'uuid',
+          'id',
+        ],
+      ),
       int.tryParse('${row['version'] ?? 1}') ?? 1,
       stage,
       '${row['number'] ?? row['id'] ?? ''}',
@@ -1970,6 +2442,7 @@ class _StageField {
     this.responsiblePicker = false,
     this.numeric = false,
     this.multiline = false,
+    this.optional = false,
   });
   final String key;
   final String label;
@@ -1980,6 +2453,7 @@ class _StageField {
   final bool responsiblePicker;
   final bool numeric;
   final bool multiline;
+  final bool optional;
 }
 
 class _StageMeta {

@@ -12,6 +12,15 @@ String userMessage(Object? raw, {int status = 0}) {
         ? 'Your session has expired. Sign in again to continue.'
         : 'A sua sessão expirou. Entre novamente para continuar.';
   }
+  if (status == 403 &&
+      (lower.contains('maker-checker') ||
+          lower.contains('criador do pedido') ||
+          lower.contains('responsável pelo pedido') ||
+          lower.contains('aprovador já votou') ||
+          lower.contains('exige aprovação de gestão') ||
+          lower.contains('duplo controlo'))) {
+    return message;
+  }
   if (status == 403 || lower.contains('forbidden')) {
     return english
         ? 'You do not have permission to perform this action.'
@@ -48,6 +57,12 @@ String userMessage(Object? raw, {int status = 0}) {
         ? 'Select a valid credit product before continuing.'
         : 'Seleccione um produto de crédito válido antes de continuar.';
   }
+  final invalidUuidField = _invalidUuidField(message);
+  if (invalidUuidField != null) {
+    return english
+        ? 'The field "$invalidUuidField" has an invalid identifier. Select the record again and retry.'
+        : 'O campo "$invalidUuidField" possui um identificador inválido. Seleccione o registo novamente e tente outra vez.';
+  }
   if (lower.contains('must be a uuid') || lower.contains('isuuid')) {
     return english
         ? 'One of the selected records is invalid. Select it again and retry.'
@@ -79,6 +94,22 @@ String userMessage(Object? raw, {int status = 0}) {
         : 'Não foi possível concluir a operação. Reveja as informações e tente novamente.';
   }
   return message;
+}
+
+String? _invalidUuidField(String message) {
+  final patterns = [
+    RegExp(
+      r'property\s+([A-Za-z][A-Za-z0-9_]*)\s+must be a UUID',
+      caseSensitive: false,
+    ),
+    RegExp(r'([A-Za-z][A-Za-z0-9_]*)\s+must be a UUID', caseSensitive: false),
+    RegExp(r'([A-Za-z][A-Za-z0-9_]*)[^\n]*isUuid', caseSensitive: false),
+  ];
+  for (final pattern in patterns) {
+    final match = pattern.firstMatch(message);
+    if (match != null) return match.group(1);
+  }
+  return null;
 }
 
 String _flatten(Object? raw) {

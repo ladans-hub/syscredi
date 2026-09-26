@@ -21,8 +21,12 @@ extension _SettingsPanels on InstitutionSettingsViewState {
         allowAdd: false,
       ),
     ],
-    'users' => [_usersPanel(), _permissionsPanel()],
-    'security' => [_sessionsPanel(), _auditPanel()],
+    'users' => [
+      _notice(
+        'A gestão operacional de utilizadores e acessos está disponível em Administração → Gerir utilizadores.',
+      ),
+    ],
+    'security' => [_auditPanel()],
     'appearance' => [],
     'credit' => [
       _notice(
@@ -53,7 +57,7 @@ extension _SettingsPanels on InstitutionSettingsViewState {
       ),
     ],
     'notifications' => [_messagesPanel()],
-    'data' => [_dataPanel(), _integrationsPanel(), _auditPanel()],
+    'data' => [_dataPanel(), _auditPanel()],
     'regional' => [_regionalPreview()],
     _ => [],
   };
@@ -362,8 +366,7 @@ extension _SettingsPanels on InstitutionSettingsViewState {
         icon: const Icon(FluentIcons.add, size: 16),
         label: const Text('Novo utilizador'),
       ),
-      description:
-          'Contas de demonstração. Criar ou recuperar uma conta aqui não envia convites nem altera o acesso real.',
+      description: 'Utilizadores e acessos da organização.',
     );
   }
 
@@ -392,7 +395,7 @@ extension _SettingsPanels on InstitutionSettingsViewState {
           _notice(
             _role == 'Gestor'
                 ? 'O perfil Gestor mantém o acesso administrativo. Crie um perfil personalizado para configurar acessos restritos.'
-                : 'As permissões são um modelo de demonstração. A autorização efectiva deve ser aplicada pelo serviço central.',
+                : 'As permissões são aplicadas pelo serviço central após guardar as alterações.',
           ),
           _table(
             ['Módulo', ...permissionActions],
@@ -443,55 +446,11 @@ extension _SettingsPanels on InstitutionSettingsViewState {
     );
   }
 
-  Widget _sessionsPanel() => _panel(
-    'Sessões e dispositivos',
-    Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _notice(
-          'Sessões demonstrativas. Revogar aqui não termina sessões reais.',
-        ),
-        _table(
-          [
-            'Utilizador',
-            'Dispositivo',
-            'Local / último acesso',
-            'Estado',
-            'Acção',
-          ],
-          [
-            for (final row in data['sessions'] as List)
-              [
-                _cell('${row['user']}'),
-                _cell('${row['device']}'),
-                _cell('${row['location']} · ${row['lastAccess']}'),
-                _badge('${row['status']}'),
-                TextButton(
-                  onPressed: row['status'] == 'Activa'
-                      ? () async {
-                          if (await _confirm(
-                            'Revogar sessão?',
-                            'A sessão de ${row['user']} será marcada como revogada na demonstração.',
-                          )) {
-                            row['status'] = 'Revogada';
-                            model.refresh();
-                          }
-                        }
-                      : null,
-                  child: const Text('Revogar'),
-                ),
-              ],
-          ],
-        ),
-      ],
-    ),
-  );
-
   Widget _auditPanel() => _panel(
     'Histórico de alterações',
     model.audit.isEmpty
         ? _notice(
-            'Nenhuma alteração guardada nesta demonstração. O primeiro registo será criado ao guardar.',
+            'Nenhuma alteração guardada. O primeiro registo será criado ao guardar.',
           )
         : _table(
             ['Data / hora', 'Utilizador', 'Acção', 'Alterações'],
@@ -513,7 +472,7 @@ extension _SettingsPanels on InstitutionSettingsViewState {
             ],
           ),
     description:
-        'Histórico só de consulta, sem edição ou eliminação nesta interface. Armazenamento local demonstrativo; a imutabilidade exige um serviço de auditoria central.',
+        'Histórico de consulta das alterações guardadas. Os eventos remotos são preservados pelo serviço central.',
   );
 
   Widget _workflowPanel() => _panel(
@@ -658,7 +617,7 @@ extension _SettingsPanels on InstitutionSettingsViewState {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _notice(
-          'As operações abaixo abrangem apenas as definições guardadas desta demonstração. Não incluem clientes, créditos, credenciais nem a base de dados de produção.',
+          'A exportação inclui as definições gerais e institucionais guardadas. Dados operacionais e credenciais não são incluídos.',
         ),
         Wrap(
           spacing: 12,
@@ -683,77 +642,6 @@ extension _SettingsPanels on InstitutionSettingsViewState {
         ),
       ],
     ),
-  );
-
-  Widget _integrationsPanel() => _panel(
-    'Integrações disponíveis',
-    Column(
-      children: [
-        for (final row in data['integrations'] as List)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: _surface(
-              child: Wrap(
-                spacing: 16,
-                runSpacing: 12,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  Icon(
-                    FluentIcons.plug_connected,
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
-                  SizedBox(
-                    width: 210,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '${row['name']}',
-                          style: const TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                        Text(
-                          'Última verificação: ${row['lastCheck']}',
-                          style: const TextStyle(fontSize: 11),
-                        ),
-                      ],
-                    ),
-                  ),
-                  _badge('${row['status']}'),
-                  TextButton(
-                    onPressed: () {
-                      row['status'] = 'Simulado';
-                      row['lastCheck'] = DateTime.now()
-                          .toIso8601String()
-                          .substring(0, 16)
-                          .replaceFirst('T', ' ');
-                      model.refresh();
-                      _toast(
-                        'Teste de demonstração concluído. Nenhuma ligação externa foi realizada.',
-                      );
-                    },
-                    child: const Text('Simular teste'),
-                  ),
-                  if (row['status'] == 'Simulado')
-                    TextButton(
-                      onPressed: () async {
-                        if (await _confirm(
-                          'Desactivar integração?',
-                          'A integração ${row['name']} será desactivada na demonstração.',
-                        )) {
-                          row['status'] = 'Não ligado';
-                          model.refresh();
-                        }
-                      },
-                      child: const Text('Desactivar'),
-                    ),
-                ],
-              ),
-            ),
-          ),
-      ],
-    ),
-    description:
-        'Não são recolhidos nem apresentados tokens, palavras-passe ou chaves privadas.',
   );
 
   Widget _regionalPreview() => _panel(
@@ -1092,11 +980,7 @@ extension _SettingsPanels on InstitutionSettingsViewState {
                       children: [
                         if (data['watermarkDocuments'] == true)
                           Align(
-                            alignment: switch (data['watermarkPosition']) {
-                              'Inferior direito' => Alignment.bottomRight,
-                              'Superior esquerdo' => Alignment.topLeft,
-                              _ => Alignment.center,
-                            },
+                            alignment: Alignment.center,
                             child: Opacity(
                               opacity:
                                   ((num.tryParse(
@@ -1112,7 +996,7 @@ extension _SettingsPanels on InstitutionSettingsViewState {
                                           (num.tryParse(
                                                     '${data['watermarkSize']}',
                                                   ) ??
-                                                  320)
+                                                  344)
                                               .toDouble()
                                               .clamp(100, 560),
                                       fit: BoxFit.contain,
@@ -1128,10 +1012,11 @@ extension _SettingsPanels on InstitutionSettingsViewState {
                           ),
                         Positioned.fill(
                           child: FittedBox(
-                            fit: BoxFit.contain,
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.topCenter,
                             child: SizedBox(
                               width: 570,
-                              height: 806,
+                              height: 900,
                               child: Padding(
                                 padding: const EdgeInsets.all(36),
                                 child: DefaultTextStyle(
@@ -1142,40 +1027,47 @@ extension _SettingsPanels on InstitutionSettingsViewState {
                                   ),
                                   child: Column(
                                     crossAxisAlignment:
-                                        CrossAxisAlignment.start,
+                                        CrossAxisAlignment.stretch,
                                     children: [
-                                      Row(
+                                      Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.center,
                                         children: [
-                                          if (logo != null) ...[
+                                          if (logo != null)
                                             Image.memory(
                                               logo,
-                                              width: 64,
-                                              height: 64,
+                                              width: 58,
+                                              height: 58,
+                                              fit: BoxFit.contain,
+                                            )
+                                          else
+                                            Image.asset(
+                                              AppAssets.syscrediLogo,
+                                              width: 58,
+                                              height: 58,
                                               fit: BoxFit.contain,
                                             ),
-                                            const SizedBox(width: 14),
-                                          ],
-                                          Expanded(
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                Text(
-                                                  '${data['legalName']}',
-                                                  style: const TextStyle(
-                                                    fontWeight: FontWeight.w700,
-                                                    fontSize: 16,
-                                                  ),
-                                                ),
-                                                Text(
-                                                  'NUIT ${data['nuit']} · ${data['license']}',
-                                                ),
-                                                Text(
-                                                  '${data['documentHeader']}',
-                                                  maxLines: 2,
-                                                ),
-                                              ],
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            '${data['legalName'] ?? ''}'
+                                                    .trim()
+                                                    .isEmpty
+                                                ? 'SysCredi'
+                                                : '${data['legalName']}',
+                                            textAlign: TextAlign.center,
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.w700,
+                                              fontSize: 16,
                                             ),
+                                          ),
+                                          Text(
+                                            'NUIT ${data['nuit']} · ${data['license']}',
+                                            textAlign: TextAlign.center,
+                                          ),
+                                          Text(
+                                            '${data['documentHeader']}',
+                                            maxLines: 2,
+                                            textAlign: TextAlign.center,
                                           ),
                                         ],
                                       ),
@@ -1215,37 +1107,57 @@ extension _SettingsPanels on InstitutionSettingsViewState {
                                       Text(
                                         '${data['documentPlace']}${data['showDate'] == true ? ', ${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}' : ''}',
                                       ),
-                                      Row(
+                                      Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.center,
                                         children: [
-                                          if (signature != null)
-                                            Image.memory(
-                                              signature,
-                                              width: 110,
-                                              height: 55,
-                                              fit: BoxFit.contain,
-                                            )
-                                          else
-                                            const SizedBox(
-                                              height: 48,
-                                              width: 110,
+                                          SizedBox(
+                                            width: 130,
+                                            height: 68,
+                                            child: Stack(
+                                              alignment: Alignment.center,
+                                              children: [
+                                                if (signature != null)
+                                                  Positioned(
+                                                    bottom: 5,
+                                                    child: Image.memory(
+                                                      signature,
+                                                      width: 96,
+                                                      height: 40,
+                                                      fit: BoxFit.contain,
+                                                    ),
+                                                  ),
+                                                if (stamp != null)
+                                                  Positioned(
+                                                    top: 0,
+                                                    child: Image.memory(
+                                                      stamp,
+                                                      width: 54,
+                                                      height: 54,
+                                                      fit: BoxFit.contain,
+                                                    ),
+                                                  ),
+                                              ],
                                             ),
-                                          const Spacer(),
-                                          if (stamp != null)
-                                            Image.memory(
-                                              stamp,
-                                              width: 70,
-                                              height: 70,
-                                              fit: BoxFit.contain,
+                                          ),
+                                          Container(
+                                            width: 180,
+                                            height: 1,
+                                            color: const Color(0xff475569),
+                                          ),
+                                          Text(
+                                            '${signer['name']}',
+                                            textAlign: TextAlign.center,
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.w700,
                                             ),
+                                          ),
+                                          Text(
+                                            '${signer['position']}',
+                                            textAlign: TextAlign.center,
+                                          ),
                                         ],
                                       ),
-                                      Text(
-                                        '${signer['name']}',
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
-                                      Text('${signer['position']}'),
                                       const Divider(height: 26),
                                       Text(
                                         '${data['documentFooter']}',

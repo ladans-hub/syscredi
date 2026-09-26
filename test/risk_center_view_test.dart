@@ -47,7 +47,7 @@ void main() {
     await open(tester, rows);
     expect(find.text('30,0%'), findsOneWidget);
     expect(find.text('10,0%'), findsOneWidget);
-    expect(find.text('1000,00 MT'), findsOneWidget);
+    expect(find.text('1 000,00 MT'), findsOneWidget);
     await tester.tap(find.text('Apenas prioritários'));
     await tester.pumpAndSettle();
     expect(find.text('Cliente A'), findsNothing);

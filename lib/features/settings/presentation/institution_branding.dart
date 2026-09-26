@@ -1,12 +1,22 @@
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import '../../../app/theme/app_theme.dart';
 import '../domain/settings_schema.dart';
 
 final institutionBranding = ValueNotifier<SettingsData>(defaultSettings());
+
+String institutionEmailSenderName([SettingsData? settings]) {
+  final data = settings ?? institutionBranding.value;
+  for (final key in ['tradeName', 'legalName']) {
+    final value = '${data[key] ?? ''}'.trim();
+    if (value.isNotEmpty) return value;
+  }
+  return 'Syscredi';
+}
 
 Uint8List? institutionAsset(SettingsData data, String key) {
   final asset = (data['assets'] as Map?)?[key];
@@ -124,44 +134,146 @@ class InstitutionBioText extends StatelessWidget {
 /// Shared document furniture: report exports and institutional A4 preview use
 /// the same settings, assets and signatory lookup.
 class InstitutionDocument {
-  InstitutionDocument({SettingsData? settings})
-    : data = settings ?? institutionBranding.value;
+  InstitutionDocument({SettingsData? settings, Uint8List? fallbackLogo})
+    : data = settings ?? institutionBranding.value,
+      _fallbackLogo = fallbackLogo;
   final SettingsData data;
+  final Uint8List? _fallbackLogo;
+
+  static Future<InstitutionDocument> create({SettingsData? settings}) async {
+    final bytes = (await rootBundle.load(
+      'assets/images/logo.png',
+    )).buffer.asUint8List();
+    return InstitutionDocument(settings: settings, fallbackLogo: bytes);
+  }
+
+  Uint8List? get logo => institutionAsset(data, 'logo') ?? _fallbackLogo;
+
+  String value(Object? raw) {
+    final text = '${raw ?? ''}'.trim();
+    return text.isEmpty ||
+            text.toLowerCase() == 'null' ||
+            text == '—' ||
+            text == '�'
+        ? '--'
+        : text;
+  }
+
+  pw.Widget sectionTitle(String value) => pw.Container(
+    width: double.infinity,
+    alignment: pw.Alignment.center,
+    child: pw.Text(
+      value,
+      textAlign: pw.TextAlign.center,
+      style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+    ),
+  );
+
+  PdfColor get primaryColor {
+    final value = '${data['primaryColor'] ?? ''}'.replaceFirst('#', '');
+    final parsed = int.tryParse(value, radix: 16);
+    return parsed == null
+        ? PdfColors.green800
+        : PdfColor.fromInt(0xff000000 | parsed);
+  }
+
+  pw.Widget title(String value, {String? subtitle}) => pw.Container(
+    width: double.infinity,
+    alignment: pw.Alignment.center,
+    child: pw.Column(
+      mainAxisSize: pw.MainAxisSize.min,
+      crossAxisAlignment: pw.CrossAxisAlignment.center,
+      children: [
+        pw.SizedBox(height: 22),
+        pw.Text(
+          value.toUpperCase(),
+          textAlign: pw.TextAlign.center,
+          style: pw.TextStyle(
+            fontSize: 20,
+            fontWeight: pw.FontWeight.bold,
+            color: PdfColors.blueGrey900,
+          ),
+        ),
+        if (subtitle != null && subtitle.trim().isNotEmpty) ...[
+          pw.SizedBox(height: 4),
+          pw.Text(
+            subtitle,
+            textAlign: pw.TextAlign.center,
+            style: const pw.TextStyle(fontSize: 10),
+          ),
+        ],
+        pw.SizedBox(height: 14),
+      ],
+    ),
+  );
+
+  pw.Widget information(Iterable<String> values) => pw.Container(
+    width: double.infinity,
+    padding: const pw.EdgeInsets.all(10),
+    decoration: pw.BoxDecoration(
+      color: PdfColors.grey100,
+      borderRadius: pw.BorderRadius.circular(4),
+      border: pw.Border.all(color: PdfColors.grey300),
+    ),
+    child: pw.Wrap(
+      spacing: 18,
+      runSpacing: 5,
+      children: [
+        for (final value in values)
+          pw.Text(value, style: const pw.TextStyle(fontSize: 9)),
+      ],
+    ),
+  );
+
+  pw.Widget table({
+    required List<String> headers,
+    required List<List<String>> rows,
+    bool compact = false,
+  }) => pw.TableHelper.fromTextArray(
+    headers: headers,
+    data: rows,
+    headerDecoration: pw.BoxDecoration(color: primaryColor),
+    headerStyle: pw.TextStyle(
+      color: PdfColors.white,
+      fontWeight: pw.FontWeight.bold,
+      fontSize: compact ? 6 : 8,
+    ),
+    cellStyle: pw.TextStyle(fontSize: compact ? 5.6 : 7.5),
+    cellPadding: const pw.EdgeInsets.all(4),
+    oddRowDecoration: const pw.BoxDecoration(color: PdfColors.grey100),
+  );
   pw.Widget header(pw.Context context) {
-    final logo = institutionAsset(data, 'logo');
+    final documentLogo = logo;
     return pw.Container(
+      width: double.infinity,
       padding: const pw.EdgeInsets.only(bottom: 12),
       decoration: const pw.BoxDecoration(
         border: pw.Border(bottom: pw.BorderSide(color: PdfColors.grey400)),
       ),
-      child: pw.Row(
+      child: pw.Column(
+        mainAxisSize: pw.MainAxisSize.min,
+        crossAxisAlignment: pw.CrossAxisAlignment.center,
         children: [
-          if (logo != null) ...[
-            pw.Image(pw.MemoryImage(logo), width: 55, height: 55),
-            pw.SizedBox(width: 14),
-          ],
-          pw.Expanded(
-            child: pw.Column(
-              crossAxisAlignment: pw.CrossAxisAlignment.start,
-              children: [
-                pw.Text(
-                  '${data['legalName']}',
-                  style: pw.TextStyle(
-                    fontSize: 14,
-                    fontWeight: pw.FontWeight.bold,
-                  ),
-                ),
-                pw.SizedBox(height: 4),
-                pw.Text(
-                  'NUIT ${data['nuit']} | ${data['license']}',
-                  style: const pw.TextStyle(fontSize: 9),
-                ),
-                pw.Text(
-                  '${data['documentHeader']}',
-                  style: const pw.TextStyle(fontSize: 9),
-                ),
-              ],
+          if (documentLogo != null)
+            pw.Image(pw.MemoryImage(documentLogo), width: 70, height: 70),
+          pw.SizedBox(height: 6),
+          if (value(data['legalName']) != '—') ...[
+            pw.Text(
+              value(data['legalName']),
+              textAlign: pw.TextAlign.center,
+              style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold),
             ),
+            pw.SizedBox(height: 4),
+          ],
+          pw.Text(
+            'NUIT ${data['nuit']} | ${data['license']}',
+            textAlign: pw.TextAlign.center,
+            style: const pw.TextStyle(fontSize: 9),
+          ),
+          pw.Text(
+            '${data['documentHeader']}',
+            textAlign: pw.TextAlign.center,
+            style: const pw.TextStyle(fontSize: 9),
           ),
         ],
       ),
@@ -190,67 +302,81 @@ class InstitutionDocument {
         : matches.first['position'];
     final signature = institutionAsset(data, 'signature');
     final stamp = institutionAsset(data, 'stamp');
-    return pw.Column(
-      crossAxisAlignment: pw.CrossAxisAlignment.start,
-      children: [
-        pw.SizedBox(height: 24),
-        pw.Text(
-          '${data['documentPlace']}${data['showDate'] == true ? ', ${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}' : ''}',
-        ),
-        pw.Row(
-          children: [
-            if (signature != null)
-              pw.Image(pw.MemoryImage(signature), width: 110, height: 50),
-            if (stamp != null)
-              pw.Image(pw.MemoryImage(stamp), width: 65, height: 65),
-          ],
-        ),
-        pw.Text('$name', style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
-        pw.Text('$role'),
-      ],
-    );
-  }
-
-  pw.PageTheme pageTheme() {
-    final logo = institutionAsset(data, 'logo');
-    return pw.PageTheme(
-      pageFormat: PdfPageFormat.a4,
-      margin: const pw.EdgeInsets.all(38),
-      buildBackground: (_) => pw.FullPage(
-        ignoreMargins: true,
-        child: pw.Align(
-          alignment: switch (data['watermarkPosition']) {
-            'Inferior direito' => pw.Alignment.bottomRight,
-            'Superior esquerdo' => pw.Alignment.topLeft,
-            _ => pw.Alignment.center,
-          },
-          child: data['watermarkDocuments'] == true
-              ? pw.Opacity(
-                  opacity:
-                      (num.tryParse('${data['watermarkOpacity']}') ?? 6) / 100,
-                  child: logo == null
-                      ? pw.Text(
-                          '${data['tradeName']}',
-                          style: pw.TextStyle(
-                            fontSize: 38,
-                            fontWeight: pw.FontWeight.bold,
-                          ),
-                        )
-                      : pw.Image(
-                          pw.MemoryImage(logo),
-                          width:
-                              (num.tryParse('${data['watermarkSize']}') ?? 320)
-                                  .toDouble(),
-                          height: 260,
-                        ),
-                )
-              : pw.SizedBox(),
-        ),
+    return pw.Center(
+      child: pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.center,
+        children: [
+          pw.SizedBox(height: 42),
+          pw.Text(
+            '${data['documentPlace']}${data['showDate'] == true ? ', ${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}' : ''}',
+          ),
+          pw.SizedBox(
+            width: 140,
+            height: 74,
+            child: pw.Stack(
+              alignment: pw.Alignment.center,
+              children: [
+                if (signature != null)
+                  pw.Positioned(
+                    bottom: 6,
+                    child: pw.Image(
+                      pw.MemoryImage(signature),
+                      width: 110,
+                      height: 50,
+                    ),
+                  ),
+                if (stamp != null)
+                  pw.Positioned(
+                    top: 0,
+                    child: pw.Image(
+                      pw.MemoryImage(stamp),
+                      width: 65,
+                      height: 65,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          pw.Container(width: 180, height: 1, color: PdfColors.grey700),
+          pw.Text('$name', style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+          pw.Text('$role'),
+        ],
       ),
     );
   }
 
+  pw.Widget _watermarkBackground() {
+    final documentLogo = logo;
+    return pw.Center(
+      child: data['watermarkDocuments'] == true && documentLogo != null
+          ? pw.Opacity(
+              opacity: (num.tryParse('${data['watermarkOpacity']}') ?? 6) / 100,
+              child: pw.Image(
+                pw.MemoryImage(documentLogo),
+                width:
+                    (num.tryParse('${data['watermarkSize']}') ?? 320)
+                        .toDouble() +
+                    24,
+                fit: pw.BoxFit.contain,
+              ),
+            )
+          : pw.SizedBox(),
+    );
+  }
+
+  pw.PageTheme pageTheme({PdfPageFormat pageFormat = PdfPageFormat.a4}) {
+    return pw.PageTheme(
+      pageFormat: pageFormat,
+      margin: const pw.EdgeInsets.all(38),
+      buildBackground: (_) =>
+          pw.FullPage(ignoreMargins: true, child: _watermarkBackground()),
+    );
+  }
+
   Future<Uint8List> preview(String type) async {
+    if (_fallbackLogo == null && institutionAsset(data, 'logo') == null) {
+      return (await InstitutionDocument.create(settings: data)).preview(type);
+    }
     final doc = pw.Document();
     final template = (data['templates'] as List).firstWhere(
       (t) => t['document'] == type,
@@ -261,13 +387,8 @@ class InstitutionDocument {
         header: header,
         footer: footer,
         build: (_) => [
-          pw.SizedBox(height: 22),
-          pw.Text(
-            '${template['title']}',
-            style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold),
-          ),
-          pw.SizedBox(height: 12),
-          pw.Text('PRÉ-VISUALIZAÇÃO - DOCUMENTO DE DEMONSTRAÇÃO'),
+          title('${template['title']}'),
+          sectionTitle('PRÉ-VISUALIZAÇÃO - DOCUMENTO DE DEMONSTRAÇÃO'),
           pw.SizedBox(height: 18),
           pw.Text(
             '${template['body']}'
@@ -276,9 +397,9 @@ class InstitutionDocument {
                 .replaceAll('{referencia}', 'CRE-2026-MPT-000304'),
           ),
           pw.SizedBox(height: 20),
-          pw.TableHelper.fromTextArray(
-            headers: ['Campo obrigatório', 'Valor demonstrativo'],
-            data: [
+          table(
+            headers: ['Campo obrigatório', 'Valor'],
+            rows: [
               ['Cliente / NUIT', 'Amélia João Massango / 123456789'],
               ['Capital / moeda', '25 000,00 MZN'],
               ['Taxa / prazo', '3% por mês / 6 meses'],

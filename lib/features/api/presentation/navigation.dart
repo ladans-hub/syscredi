@@ -26,6 +26,7 @@ enum Area {
   audit,
   faq,
   settings,
+  generalSettings,
   reconciliation,
   financialAnalysis,
   creditFinancing,
@@ -58,6 +59,7 @@ extension AreaMeta on Area {
     Area.audit => 'Auditoria',
     Area.faq => 'Guia rápido',
     Area.settings => 'Definições',
+    Area.generalSettings => 'Definições gerais',
     Area.reconciliation => 'Conciliação bancária',
     Area.financialAnalysis => 'Análise financeira',
     Area.creditFinancing => 'Financiamento',
@@ -84,6 +86,7 @@ extension AreaMeta on Area {
     Area.reports => FluentSystemIcons.analytics,
     Area.plans => FluentSystemIcons.subscriptions,
     Area.settings => FluentSystemIcons.settings,
+    Area.generalSettings => FluentSystemIcons.settings,
     _ => FluentSystemIcons.apps,
   };
 }
@@ -94,12 +97,16 @@ class SideBar extends StatelessWidget {
     required this.activeRoute,
     required this.onTap,
     required this.onSubmenu,
+    this.subscriptionSubtitle,
+    this.subscriptionPackage,
     super.key,
   });
   final Area area;
   final String activeRoute;
   final ValueChanged<Area> onTap;
   final ValueChanged<String> onSubmenu;
+  final String? subscriptionSubtitle;
+  final String? subscriptionPackage;
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: Listenable.merge([brandPalette, brandVisuals]),
@@ -227,12 +234,7 @@ class SideBar extends StatelessWidget {
                 ]),
                 group('Relatórios', FluentSystemIcons.analytics, [
                   subItem(
-                    'Em PDF',
-                    FluentSystemIcons.picture_as_pdf_outlined,
-                    Area.reports,
-                  ),
-                  subItem(
-                    'Em Excel',
+                    'Exportações',
                     FluentSystemIcons.table_view_outlined,
                     Area.reports,
                   ),
@@ -243,12 +245,7 @@ class SideBar extends StatelessWidget {
                   ),
                   subItem('Cartas', FluentSystemIcons.mail, Area.reports),
                   subItem(
-                    'Mensal para BM',
-                    FluentSystemIcons.calendar,
-                    Area.reports,
-                  ),
-                  subItem(
-                    'Trimestral para BM',
+                    'Carta para BM',
                     FluentSystemIcons.calendar,
                     Area.reports,
                   ),
@@ -338,6 +335,7 @@ class SideBar extends StatelessWidget {
                   ),
                 ]),
                 item(Area.plans),
+                item(Area.generalSettings),
               ],
             ),
           ),
@@ -406,7 +404,10 @@ class SideBar extends StatelessWidget {
       child: ListTile(
         dense: true,
         minLeadingWidth: 22,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 2),
+        contentPadding: EdgeInsets.symmetric(
+          horizontal: 15,
+          vertical: a == Area.plans ? 4 : 2,
+        ),
         leading: !brandVisuals.value.navigationIcons
             ? null
             : Icon(
@@ -418,10 +419,60 @@ class SideBar extends StatelessWidget {
           a == Area.dashboard ? 'Início' : a.label,
           style: const TextStyle(color: Colors.white, fontSize: 14),
         ),
+        subtitle: a == Area.plans && subscriptionSubtitle != null
+            ? Padding(
+                padding: const EdgeInsets.only(top: 3),
+                child: Row(
+                  children: [
+                    Flexible(
+                      child: Text.rich(
+                        _subscriptionSubtitleSpan(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    if (subscriptionPackage != null) ...[
+                      const SizedBox(width: 6),
+                      _SubscriptionPackageChip(package: subscriptionPackage!),
+                    ],
+                  ],
+                ),
+              )
+            : null,
         onTap: () => onTap(a),
       ),
     ),
   );
+
+  TextSpan _subscriptionSubtitleSpan() {
+    final subtitle = subscriptionSubtitle!;
+    const prefix = 'Plano atual: ';
+    if (subscriptionPackage == null || !subtitle.startsWith(prefix)) {
+      return TextSpan(
+        text: subtitle,
+        style: const TextStyle(color: Color(0xFFBBD3C7)),
+      );
+    }
+    return TextSpan(
+      children: [
+        TextSpan(
+          text: prefix,
+          style: TextStyle(color: brandPalette.value.primary),
+        ),
+        TextSpan(
+          text: subtitle.substring(prefix.length),
+          style: TextStyle(
+            color: _subscriptionPackageForeground(subscriptionPackage!),
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ],
+    );
+  }
 
   Widget group(String title, IconData icon, List<Widget> children) => Theme(
     data: ThemeData(dividerColor: Colors.transparent),
@@ -484,12 +535,10 @@ class SideBar extends StatelessWidget {
                 title == 'Desembolsos' ||
                 title == 'Receitas' ||
                 title == 'Despesas' ||
-                title == 'Em PDF' ||
-                title == 'Em Excel' ||
+                title == 'Exportações' ||
                 title == 'Registos' ||
                 title == 'Cartas' ||
-                title == 'Mensal para BM' ||
-                title == 'Trimestral para BM' ||
+                title == 'Carta para BM' ||
                 title == 'Créditos' ||
                 title == 'Clientes' ||
                 title == 'Financeiros' ||
@@ -509,12 +558,12 @@ class SideBar extends StatelessWidget {
     'Empresas' => 'businesses',
     'Avalistas' => 'client-guarantors',
     'Co-assinantes' => 'co-signers',
-    'Em PDF' || 'Créditos' => 'report-credit',
-    'Em Excel' || 'Clientes' => 'report-client',
-    'Registos' => 'report-registers',
+    'Exportações' => 'report-exports',
+    'Registos' => 'report-records',
     'Cartas' => 'report-letters',
-    'Mensal para BM' => 'report-bom-monthly',
-    'Trimestral para BM' => 'report-bom-quarterly',
+    'Carta para BM' => 'report-bm',
+    'Créditos' => 'report-credits',
+    'Clientes' => 'report-clients',
     'Financeiros' => 'report-financial',
     'Diversos' => 'report-misc',
     'Saldos' => 'finance-balances',
@@ -529,7 +578,8 @@ class SideBar extends StatelessWidget {
     'Prestações Vencidas' => 'finance-overdue',
     'Ativos' => 'finance-assets',
     'Produtos de crédito' => 'products',
-    'Definições institucionais' => 'settings',
+    'Definições institucionais' => 'organization-settings',
+    'Definições gerais' => 'general-settings',
     'Auditoria' => 'audit',
     'Contabilidade' => 'admin-accounting',
     'Sincronização' => 'admin-sync',
@@ -548,6 +598,62 @@ class SideBar extends StatelessWidget {
     },
   };
 }
+
+class _SubscriptionPackageChip extends StatelessWidget {
+  const _SubscriptionPackageChip({required this.package});
+
+  final String package;
+
+  @override
+  Widget build(BuildContext context) {
+    final normalized = package.toLowerCase();
+    final (label, foreground, background, border) = switch (normalized) {
+      'premium' => (
+        'Premium',
+        _subscriptionPackageForeground(normalized),
+        const Color(0xFF8A6400).withValues(alpha: .52),
+        const Color(0xFFC49322).withValues(alpha: .72),
+      ),
+      'pro' => (
+        'Pro',
+        _subscriptionPackageForeground(normalized),
+        brandPalette.value.primary.withValues(alpha: .24),
+        brandPalette.value.primary.withValues(alpha: .72),
+      ),
+      _ => (
+        'Básico',
+        _subscriptionPackageForeground(normalized),
+        const Color(0xFF6F7A82).withValues(alpha: .34),
+        const Color(0xFFB7C0C6).withValues(alpha: .62),
+      ),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: border),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: foreground,
+          fontSize: 9,
+          height: 1.15,
+          fontWeight: FontWeight.w800,
+          letterSpacing: .15,
+        ),
+      ),
+    );
+  }
+}
+
+Color _subscriptionPackageForeground(String package) =>
+    switch (package.toLowerCase()) {
+      'premium' => const Color(0xFFC49322),
+      'pro' => brandPalette.value.primary,
+      _ => const Color(0xFFB7C0C6),
+    };
 
 Future<void> showThemeModeMenu(
   BuildContext context,

@@ -23,7 +23,88 @@ class MemorySecrets implements SecretStore {
   }
 }
 
+class _CleanupFailureStore extends MemorySecrets {
+  bool operationSent = false;
+
+  @override
+  Future<void> write(String key, String value) async {
+    if (operationSent && value == '[]') {
+      throw StateError('Falha simulada do armazenamento local.');
+    }
+    await super.write(key, value);
+  }
+}
+
 void main() {
+  test('cache mantém respostas separadas por caminho e consulta', () async {
+    final store = MemorySecrets();
+    final api = ApiClient(
+      baseUrl: 'https://api.test/v1',
+      scope: 'cache-paths',
+      store: store,
+      userId: () => 'manager-1',
+      accessToken: () async => 'token',
+      refreshToken: () async {},
+      client: MockClient((request) async {
+        if (request.url.path.endsWith('/users')) {
+          return http.Response('[{"id":"user-1"}]', 200);
+        }
+        if (request.url.path.endsWith('/payment-accounts')) {
+          return http.Response('[{"id":"account-1"}]', 200);
+        }
+        return http.Response('[]', 200);
+      }),
+    );
+
+    expect((await api.get('/users?limit=100'))[0]['id'], 'user-1');
+    expect((await api.get('/payment-accounts'))[0]['id'], 'account-1');
+    api.close();
+  });
+
+  test('sucesso remoto não vira falha por erro de limpeza local', () async {
+    final store = _CleanupFailureStore();
+    final api = ApiClient(
+      baseUrl: 'https://api.test/v1',
+      scope: 'cleanup-failure',
+      store: store,
+      userId: () => 'manager-1',
+      accessToken: () async => 'token',
+      refreshToken: () async {},
+      client: MockClient((_) async {
+        store.operationSent = true;
+        return http.Response('{"id":"client-1","name":"Nome editado"}', 200);
+      }),
+    );
+
+    expect(
+      await api.write('PUT', '/clients/client-1', {
+        'name': 'Nome editado',
+        'version': 1,
+      }),
+      containsPair('name', 'Nome editado'),
+    );
+    api.close();
+  });
+
+  test(
+    '204 sem corpo confirma operação sem erro de resposta inválida',
+    () async {
+      final api = ApiClient(
+        baseUrl: 'https://api.test/v1',
+        scope: 'no-content',
+        store: MemorySecrets(),
+        userId: () => 'manager-1',
+        accessToken: () async => 'token',
+        refreshToken: () async {},
+        client: MockClient((_) async => http.Response('', 204)),
+      );
+
+      expect(await api.write('POST', '/notifications/id/read', {}), isEmpty);
+      expect(await api.pending(), isEmpty);
+      api.close();
+    },
+  );
+
   test('onboarding público envia credenciais sem Authorization', () async {
     late http.Request captured;
     final api = ApiClient(
@@ -62,6 +143,39 @@ void main() {
       transport.request('POST', '/clients', body: {'name': 'x'}),
       throwsA(isA<ApiFailure>()),
     );
+    transport.close();
+  });
+  test('convite remove campos de marca não aceites pela API', () async {
+    late http.Request captured;
+    final transport = HttpTransport(
+      baseUrl: 'https://api.test/v1',
+      userId: () => 'user-a',
+      accessToken: () async => 'token',
+      refreshToken: () async {},
+      client: MockClient((request) async {
+        captured = request;
+        return http.Response('{}', 201);
+      }),
+    );
+
+    await transport.request(
+      'POST',
+      '/organizations/members/invite',
+      idempotencyKey: 'invite-1',
+      body: {
+        'name': 'Novo Utilizador',
+        'email': 'novo@example.com',
+        'role': 'operator',
+        'organizationName': 'Cooperativa Horizonte',
+        'emailSenderName': 'Cooperativa Horizonte',
+      },
+    );
+
+    expect(jsonDecode(captured.body), {
+      'name': 'Novo Utilizador',
+      'email': 'novo@example.com',
+      'role': 'operator',
+    });
     transport.close();
   });
   test(

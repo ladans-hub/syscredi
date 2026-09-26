@@ -1,11 +1,163 @@
 import 'package:flutter/material.dart' hide Icons;
 import '../../../app/theme/fluent_icons_compat.dart';
 import 'package:syscredi/core/widgets/equal_button_group.dart';
+import 'package:syscredi/core/widgets/operation_feedback.dart';
+import 'package:syscredi/core/widgets/activation_contact_card.dart';
 
 import '../../../app/theme/app_theme.dart';
 
 const _loginNavy = navy;
 const _loginGreen = green;
+
+class PasswordRecoveryPage extends StatefulWidget {
+  const PasswordRecoveryPage({required this.updatePassword, super.key});
+  final Future<void> Function(String password) updatePassword;
+
+  @override
+  State<PasswordRecoveryPage> createState() => _PasswordRecoveryPageState();
+}
+
+class _PasswordRecoveryPageState extends State<PasswordRecoveryPage> {
+  final form = GlobalKey<FormState>();
+  final password = TextEditingController();
+  final confirmation = TextEditingController();
+  bool busy = false;
+  bool showPassword = false;
+
+  @override
+  void dispose() {
+    password.dispose();
+    confirmation.dispose();
+    super.dispose();
+  }
+
+  Future<void> submit() async {
+    if (!form.currentState!.validate()) return;
+    setState(() => busy = true);
+    try {
+      await widget.updatePassword(password.text);
+      if (mounted) {
+        await showFeedbackDialog(
+          context,
+          title: 'Palavra-passe atualizada',
+          message: 'A sua palavra-passe foi alterada. Entre novamente.',
+          kind: FeedbackKind.success,
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        await showFeedbackDialog(
+          context,
+          title: 'Não foi possível atualizar',
+          message: feedbackMessage(error),
+          kind: FeedbackKind.error,
+        );
+      }
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    body: Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 460),
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Form(
+                key: form,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Icon(
+                      Icons.lock_outline,
+                      size: 48,
+                      color: _loginGreen,
+                    ),
+                    const SizedBox(height: 18),
+                    const Text(
+                      'Definir nova palavra-passe',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Escolha uma palavra-passe segura para continuar.',
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 24),
+                    TextFormField(
+                      controller: password,
+                      autofocus: true,
+                      obscureText: !showPassword,
+                      decoration: InputDecoration(
+                        labelText: 'Nova palavra-passe',
+                        prefixIcon: const Icon(Icons.lock_outline),
+                        suffixIcon: IconButton(
+                          onPressed: () =>
+                              setState(() => showPassword = !showPassword),
+                          icon: Icon(
+                            showPassword
+                                ? Icons.visibility_off_outlined
+                                : Icons.visibility_outlined,
+                          ),
+                        ),
+                      ),
+                      validator: (value) =>
+                          value == null || value.trim().length < 8
+                          ? 'Utilize pelo menos 8 caracteres.'
+                          : null,
+                    ),
+                    const SizedBox(height: 14),
+                    TextFormField(
+                      controller: confirmation,
+                      obscureText: !showPassword,
+                      onFieldSubmitted: (_) => submit(),
+                      decoration: const InputDecoration(
+                        labelText: 'Confirmar palavra-passe',
+                        prefixIcon: Icon(Icons.verified_user_outlined),
+                      ),
+                      validator: (value) => value != password.text
+                          ? 'As palavras-passe não coincidem.'
+                          : null,
+                    ),
+                    const SizedBox(height: 24),
+                    SizedBox(
+                      height: 52,
+                      child: FilledButton.icon(
+                        onPressed: busy ? null : submit,
+                        icon: busy
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.check_circle_outline),
+                        label: Text(
+                          busy ? 'A atualizar…' : 'Guardar nova palavra-passe',
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
 
 class LoginPage extends StatefulWidget {
   const LoginPage({
@@ -14,12 +166,14 @@ class LoginPage extends StatefulWidget {
     this.recoverPassword,
     this.register,
     this.onGuest,
+    this.showActivationContact = false,
     super.key,
   });
   final ValueChanged<Object?>? onAuthenticated;
   final Future<void> Function(String email, String password)? login;
   final Future<void> Function(String email)? recoverPassword;
   final VoidCallback? onGuest;
+  final bool showActivationContact;
   final Future<void> Function(
     String name,
     String email,
@@ -36,7 +190,6 @@ class _LoginPageState extends State<LoginPage> {
   final email = TextEditingController();
   final password = TextEditingController();
   bool busy = false, showPassword = false;
-  String? error;
 
   @override
   void initState() {
@@ -52,14 +205,18 @@ class _LoginPageState extends State<LoginPage> {
 
   Future<void> submit() async {
     if (!form.currentState!.validate() || widget.login == null) return;
-    setState(() {
-      busy = true;
-      error = null;
-    });
+    setState(() => busy = true);
     try {
       await widget.login!(email.text.trim(), password.text);
     } catch (e) {
-      if (mounted) setState(() => error = e.toString());
+      if (mounted) {
+        await showFeedbackDialog(
+          context,
+          title: 'Não foi possível entrar',
+          message: feedbackMessage(e),
+          kind: FeedbackKind.error,
+        );
+      }
     } finally {
       if (mounted) setState(() => busy = false);
     }
@@ -214,9 +371,23 @@ class _LoginPageState extends State<LoginPage> {
           newPassword.text,
           organization.text.trim(),
         );
-        if (mounted) setState(() => error = 'Acesso criado. Já pode entrar.');
+        if (mounted) {
+          await showFeedbackDialog(
+            context,
+            title: 'Acesso criado',
+            message: 'Acesso criado. Já pode entrar.',
+            kind: FeedbackKind.success,
+          );
+        }
       } catch (e) {
-        if (mounted) setState(() => error = e.toString());
+        if (mounted) {
+          await showFeedbackDialog(
+            context,
+            title: 'Não foi possível criar o acesso',
+            message: feedbackMessage(e),
+            kind: FeedbackKind.error,
+          );
+        }
       } finally {
         if (mounted) setState(() => busy = false);
       }
@@ -467,7 +638,7 @@ class _LoginPageState extends State<LoginPage> {
               const BrandLogo(size: 30),
               SizedBox(width: 9),
               Text(
-                      'Syscredi',
+                'Syscredi',
                 style: TextStyle(
                   color: Theme.of(context).colorScheme.onSurface,
                   fontSize: 25,
@@ -529,43 +700,6 @@ class _LoginPageState extends State<LoginPage> {
           validator: (v) =>
               v == null || v.isEmpty ? 'Indique a sua palavra-passe.' : null,
         ),
-        if (error != null)
-          Container(
-            margin: const EdgeInsets.only(top: 16),
-            padding: const EdgeInsets.all(13),
-            decoration: BoxDecoration(
-              color: _isSuccessMessage(error!)
-                  ? _loginGreen.withValues(alpha: .10)
-                  : Colors.red.withValues(alpha: .08),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(
-                  _isSuccessMessage(error!)
-                      ? Icons.check_circle_outline
-                      : Icons.error_outline,
-                  size: 18,
-                  color: _isSuccessMessage(error!)
-                      ? _loginGreen
-                      : Colors.redAccent,
-                ),
-                const SizedBox(width: 9),
-                Expanded(
-                  child: Text(
-                    error!,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: _isSuccessMessage(error!)
-                          ? _loginGreen
-                          : Colors.redAccent,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
         if (widget.recoverPassword != null)
           Align(
             alignment: Alignment.centerRight,
@@ -611,16 +745,23 @@ class _LoginPageState extends State<LoginPage> {
                         try {
                           await createFirstUser();
                         } catch (e) {
-                          if (mounted) {
-                            setState(() => error = e.toString());
+                          if (context.mounted) {
+                            await showFeedbackDialog(
+                              context,
+                              title: 'Não foi possível criar o acesso',
+                              message: feedbackMessage(e),
+                              kind: FeedbackKind.error,
+                            );
                           }
                         }
                         return;
                       }
                       if (mounted) {
-                        setState(
-                          () => error =
+                        await showFeedbackDialog(
+                          context,
+                          message:
                               'O cadastro remoto não está disponível nesta sessão.',
+                          kind: FeedbackKind.info,
                         );
                       }
                     },
@@ -628,6 +769,10 @@ class _LoginPageState extends State<LoginPage> {
               label: const Text('Criar primeiro utilizador'),
             ),
           ),
+        if (widget.showActivationContact) ...[
+          const SizedBox(height: 12),
+          const ActivationContactCard(compact: true),
+        ],
         const SizedBox(height: 42),
         const Center(
           child: Text(
@@ -639,29 +784,36 @@ class _LoginPageState extends State<LoginPage> {
     ),
   );
 
-  bool _isSuccessMessage(String value) =>
-      value.startsWith('Acesso criado') || value.startsWith('Enviámos');
-
   Future<void> recoverPassword() async {
     final value = email.text.trim();
     if (!RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(value)) {
-      setState(() => error = 'Indique primeiro um email válido.');
+      await showFeedbackDialog(
+        context,
+        message: 'Indique primeiro um email válido.',
+        kind: FeedbackKind.info,
+      );
       return;
     }
-    setState(() {
-      busy = true;
-      error = null;
-    });
+    setState(() => busy = true);
     try {
       await widget.recoverPassword!(value);
       if (mounted) {
-        setState(
-          () =>
-              error = 'Enviámos as instruções de recuperação para o seu email.',
+        await showFeedbackDialog(
+          context,
+          title: 'Verifique o seu email',
+          message: 'Enviámos as instruções de recuperação para o seu email.',
+          kind: FeedbackKind.info,
         );
       }
     } catch (e) {
-      if (mounted) setState(() => error = e.toString());
+      if (mounted) {
+        await showFeedbackDialog(
+          context,
+          title: 'Não foi possível recuperar o acesso',
+          message: feedbackMessage(e),
+          kind: FeedbackKind.error,
+        );
+      }
     } finally {
       if (mounted) setState(() => busy = false);
     }

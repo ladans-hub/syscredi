@@ -47,3 +47,5 @@ app.*.map.json
 # Configuração por instituição
 config/remote.json
 base/
+.vercel
+tmp/

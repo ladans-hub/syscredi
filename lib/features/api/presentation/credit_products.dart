@@ -13,6 +13,7 @@ class CreditProductsView extends StatefulWidget {
 }
 
 class _CreditProductsState extends State<CreditProductsView> {
+  final searchController = TextEditingController();
   String query = '';
   String status = 'Todos';
   final products = <_Product>[];
@@ -20,12 +21,28 @@ class _CreditProductsState extends State<CreditProductsView> {
   bool refreshing = false;
   String? error;
   bool ascending = true;
+  String? processingProductId;
 
   @override
   void initState() {
     super.initState();
     _load();
   }
+
+  @override
+  void dispose() {
+    searchController.dispose();
+    super.dispose();
+  }
+
+  String _normalizeSearch(String value) => value
+      .toLowerCase()
+      .replaceAll(RegExp('[áàâãä]'), 'a')
+      .replaceAll(RegExp('[éèêë]'), 'e')
+      .replaceAll(RegExp('[íìîï]'), 'i')
+      .replaceAll(RegExp('[óòôõö]'), 'o')
+      .replaceAll(RegExp('[úùûü]'), 'u')
+      .replaceAll('ç', 'c');
 
   Future<void> _load() async {
     final initialLoad = products.isEmpty;
@@ -60,14 +77,16 @@ class _CreditProductsState extends State<CreditProductsView> {
 
   @override
   Widget build(BuildContext context) {
+    final normalizedQuery = _normalizeSearch(query.trim());
     final visible =
         products
             .where(
               (p) =>
                   (status == 'Todos' || p.status == status) &&
-                  ('${p.name} ${p.code} ${p.type}'.toLowerCase().contains(
-                    query.toLowerCase(),
-                  )),
+                  (normalizedQuery.isEmpty ||
+                      _normalizeSearch(
+                        '${p.name} ${p.code} ${p.type} ${p.description}',
+                      ).contains(normalizedQuery)),
             )
             .toList()
           ..sort(
@@ -115,6 +134,7 @@ class _CreditProductsState extends State<CreditProductsView> {
             SizedBox(
               width: 300,
               child: TextField(
+                controller: searchController,
                 decoration: const InputDecoration(
                   labelText: 'Pesquisar produto, código ou tipo',
                   prefixIcon: Icon(Icons.search),
@@ -126,6 +146,7 @@ class _CreditProductsState extends State<CreditProductsView> {
               width: 170,
               child: DropdownButtonFormField<String>(
                 initialValue: status,
+                isExpanded: true,
                 decoration: const InputDecoration(labelText: 'Estado'),
                 items: const [
                   DropdownMenuItem(value: 'Todos', child: Text('Todos')),
@@ -135,14 +156,6 @@ class _CreditProductsState extends State<CreditProductsView> {
                 ],
                 onChanged: (v) => setState(() => status = v ?? 'Todos'),
               ),
-            ),
-            OutlinedButton.icon(
-              onPressed: () => setState(() {
-                query = '';
-                status = 'Todos';
-              }),
-              icon: const Icon(Icons.filter_alt_outlined),
-              label: const Text('Filtros'),
             ),
             OutlinedButton.icon(
               onPressed: () => setState(() => ascending = !ascending),
@@ -163,17 +176,10 @@ class _CreditProductsState extends State<CreditProductsView> {
             ),
           ),
         if (loading && products.isEmpty)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 40),
-            child: Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  SyscrediProgressIndicator(size: 42),
-                  SizedBox(height: 16),
-                  Text('A carregar produtos de crédito…'),
-                ],
-              ),
+          const SizedBox(
+            height: 220,
+            child: CenteredLoadingState(
+              message: 'A carregar produtos de crédito…',
             ),
           )
         else
@@ -228,24 +234,55 @@ class _CreditProductsState extends State<CreditProductsView> {
                             children: [
                               IconButton(
                                 tooltip: 'Ver produto',
-                                onPressed: () => _details(context, p),
+                                onPressed: processingProductId == p.id
+                                    ? null
+                                    : () => _details(context, p),
                                 icon: const Icon(Icons.visibility_outlined),
                               ),
                               IconButton(
                                 tooltip: 'Editar',
-                                onPressed: () => _form(context, product: p),
+                                onPressed:
+                                    p.statusValue != 'active' ||
+                                        processingProductId == p.id
+                                    ? null
+                                    : () => _form(context, product: p),
                                 icon: const Icon(Icons.edit),
                               ),
                               IconButton(
                                 tooltip: 'Simular',
-                                onPressed: () => _simulate(context, p),
+                                onPressed:
+                                    p.statusValue != 'active' ||
+                                        processingProductId == p.id
+                                    ? null
+                                    : () => _simulate(context, p),
                                 icon: const Icon(Icons.calculate_outlined),
                               ),
-                              IconButton(
-                                tooltip: 'Activar/desactivar',
-                                onPressed: () => _toggle(p),
-                                icon: const Icon(Icons.sync),
-                              ),
+                              if (processingProductId == p.id)
+                                const Padding(
+                                  padding: EdgeInsets.all(12),
+                                  child: SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  ),
+                                )
+                              else
+                                IconButton(
+                                  tooltip: p.statusValue == 'active'
+                                      ? 'Desactivar produto'
+                                      : 'Activar produto',
+                                  onPressed: () => _toggle(p),
+                                  icon: Icon(
+                                    p.statusValue == 'active'
+                                        ? Icons.close
+                                        : Icons.check_circle_outline,
+                                    color: p.statusValue == 'active'
+                                        ? Theme.of(context).colorScheme.error
+                                        : Colors.teal,
+                                  ),
+                                ),
                             ],
                           ),
                         ),
@@ -291,6 +328,22 @@ class _CreditProductsState extends State<CreditProductsView> {
     var minTerm = '${product?.minMonths ?? 1} mês';
     var maxTerm = '${product?.maxMonths ?? 12} meses';
     var frequency = product?.frequency ?? 'Mensal';
+    String? validateAmounts() {
+      final minimum = num.tryParse(min.text.trim());
+      final maximum = num.tryParse(max.text.trim());
+      if (minimum == null || maximum == null) return null;
+      if (minimum <= 0 || maximum <= 0) {
+        return 'Os montantes devem ser superiores a zero.';
+      }
+      if (minimum > maximum) {
+        return 'O montante mínimo não pode superar o máximo.';
+      }
+      if (_months(minTerm) > _months(maxTerm)) {
+        return 'O prazo mínimo não pode superar o prazo máximo.';
+      }
+      return null;
+    }
+
     final saved = await showDialog<bool>(
       context: context,
       builder: (dialog) => AlertDialog(
@@ -315,7 +368,9 @@ class _CreditProductsState extends State<CreditProductsView> {
                     _field(name, 'Nome do produto'),
                     _field(code, 'Código único'),
                   ]),
-                  _field(description, 'Descrição comercial', lines: 2),
+                  _formFieldSpacing(
+                    _field(description, 'Descrição comercial', lines: 2),
+                  ),
                   _section('Limites e juros'),
                   _fields([
                     _field(min, 'Montante mínimo'),
@@ -377,28 +432,7 @@ class _CreditProductsState extends State<CreditProductsView> {
                     ]),
                   ]),
                   _section('Comissões, garantias e regras'),
-                  _field(
-                    TextEditingController(),
-                    'Comissões e taxas (preparo, desembolso, selo)',
-                  ),
-                  _field(
-                    TextEditingController(),
-                    'Multas por atraso e configuração de mora',
-                  ),
-                  _field(
-                    TextEditingController(),
-                    'Garantias/avalistas exigidos',
-                  ),
-                  _field(
-                    TextEditingController(),
-                    'Critérios de elegibilidade e documentos obrigatórios',
-                    lines: 3,
-                  ),
-                  _field(
-                    TextEditingController(),
-                    'Regras de aprovação e incumprimento',
-                    lines: 3,
-                  ),
+                  _commissionFields(),
                 ],
               ),
             ),
@@ -411,9 +445,15 @@ class _CreditProductsState extends State<CreditProductsView> {
           ),
           FilledButton(
             onPressed: () {
-              if (form.currentState!.validate()) {
-                Navigator.pop(dialog, true);
+              if (!form.currentState!.validate()) return;
+              final error = validateAmounts();
+              if (error != null) {
+                ScaffoldMessenger.of(dialog)
+                  ..hideCurrentSnackBar()
+                  ..showSnackBar(SnackBar(content: Text(error)));
+                return;
               }
+              Navigator.pop(dialog, true);
             },
             child: const Text('Guardar produto'),
           ),
@@ -454,9 +494,23 @@ class _CreditProductsState extends State<CreditProductsView> {
         payload,
       );
       await _load();
-      if (mounted && context.mounted) _toast(context, 'Produto guardado.');
+      if (mounted && context.mounted) {
+        await showFeedbackDialog(
+          context,
+          title: 'Produto guardado',
+          message: 'O produto de crédito foi confirmado pelo servidor.',
+          success: true,
+        );
+      }
     } catch (failure) {
-      if (mounted && context.mounted) _toast(context, '$failure');
+      if (mounted && context.mounted) {
+        await showFeedbackDialog(
+          context,
+          title: 'Produto não guardado',
+          message: feedbackMessage(failure),
+          success: false,
+        );
+      }
     }
   }
 
@@ -480,30 +534,97 @@ class _CreditProductsState extends State<CreditProductsView> {
       ),
     ),
   );
-  Widget _fields(List<Widget> children) =>
-      Wrap(spacing: 16, runSpacing: 16, children: children);
-  Widget _field(TextEditingController c, String label, {int lines = 1}) =>
-      SizedBox(
-        width: lines > 1 ? 540 : 260,
-        child: TextFormField(
-          controller: c,
-          maxLines: lines,
-          minLines: lines,
-          validator: (v) =>
-              v == null || v.trim().isEmpty ? 'Obrigatório' : null,
-          decoration: InputDecoration(labelText: label),
+  Widget _fields(List<Widget> children) => Padding(
+    padding: const EdgeInsets.only(bottom: 16),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var index = 0; index < children.length; index++) ...[
+          SizedBox(width: double.infinity, child: children[index]),
+          if (index < children.length - 1) const SizedBox(height: 16),
+        ],
+      ],
+    ),
+  );
+
+  Widget _formFieldSpacing(Widget child) => Padding(
+    padding: const EdgeInsets.only(bottom: 16),
+    child: SizedBox(width: double.infinity, child: child),
+  );
+
+  Widget _commissionFields() => _fields([
+    _field(
+      TextEditingController(),
+      'Comissões e taxas (preparo, desembolso, selo)',
+      optional: true,
+    ),
+    _field(
+      TextEditingController(),
+      'Multas por atraso e configuração de mora',
+      optional: true,
+    ),
+    _field(
+      TextEditingController(),
+      'Garantias/avalistas exigidos',
+      optional: true,
+    ),
+    _field(
+      TextEditingController(),
+      'Critérios de elegibilidade e documentos obrigatórios',
+      lines: 3,
+      optional: true,
+    ),
+    _field(
+      TextEditingController(),
+      'Regras de aprovação e incumprimento',
+      lines: 3,
+      optional: true,
+    ),
+  ]);
+
+  Widget _field(
+    TextEditingController c,
+    String label, {
+    int lines = 1,
+    bool optional = false,
+    double? width,
+  }) => SizedBox(
+    width: width ?? double.infinity,
+    height: lines == 1 ? 56 : null,
+    child: TextFormField(
+      controller: c,
+      maxLines: lines,
+      minLines: lines,
+      textAlignVertical: TextAlignVertical.center,
+      validator: (v) =>
+          !optional && (v == null || v.trim().isEmpty) ? 'Obrigatório' : null,
+      decoration: InputDecoration(
+        labelText: label,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 16,
         ),
-      );
+      ),
+    ),
+  );
   Widget _select(
     String label,
     List<String> values, {
     String? initial,
     ValueChanged<String>? onChanged,
   }) => SizedBox(
-    width: 260,
+    width: double.infinity,
+    height: 56,
     child: DropdownButtonFormField<String>(
       initialValue: values.contains(initial) ? initial : values.first,
-      decoration: InputDecoration(labelText: label),
+      isExpanded: true,
+      decoration: InputDecoration(
+        labelText: label,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 16,
+        ),
+      ),
       items: [
         for (final v in values)
           DropdownMenuItem(
@@ -568,21 +689,108 @@ class _CreditProductsState extends State<CreditProductsView> {
       ],
     ),
   );
-  void _toast(BuildContext c, String m) => showFeedbackDialog(c, message: m);
-
   Future<void> _toggle(_Product product) async {
-    final next = product.statusValue == 'active' ? 'inactive' : 'active';
+    final activating = product.statusValue != 'active';
+    final action = activating ? 'Activar' : 'Desactivar';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: Text('$action produto de crédito?'),
+        content: Text(
+          activating
+              ? 'O produto “${product.name}” voltará a estar disponível.'
+              : 'O produto “${product.name}” deixará de estar disponível para novas operações.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialog, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: activating
+                  ? Colors.teal
+                  : Theme.of(context).colorScheme.error,
+              foregroundColor: activating
+                  ? Colors.white
+                  : Theme.of(context).colorScheme.onError,
+            ),
+            child: Text(action),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => processingProductId = product.id);
     try {
-      await widget.repository.write('PATCH', '/products/${product.id}', {
+      dynamic response;
+      try {
+        response = await _writeProductStatus(product, activating);
+      } on ApiFailure catch (failure) {
+        if (failure.status != 409) rethrow;
+        await _refreshProduct(product);
+        response = await _writeProductStatus(product, activating);
+      }
+      if (!mounted) return;
+      setState(() {
+        final updated = _responseProduct(response);
+        if (updated != null) {
+          product.raw.addAll(updated);
+        }
+        product.raw['status'] = activating ? 'active' : 'inactive';
+        product.raw['active'] = activating;
+        if (updated == null || updated['version'] == null) {
+          product.raw['version'] = product.version + 1;
+        }
+      });
+      await showFeedbackDialog(
+        context,
+        title: activating ? 'Produto activado' : 'Produto desactivado',
+        message: activating
+            ? 'O produto de crédito foi activado com sucesso.'
+            : 'O produto de crédito foi desactivado com sucesso.',
+        success: true,
+      );
+    } catch (failure) {
+      if (mounted) {
+        await showFeedbackDialog(
+          context,
+          title: 'Estado não actualizado',
+          message: feedbackMessage(failure),
+          success: false,
+        );
+      }
+    } finally {
+      if (mounted) setState(() => processingProductId = null);
+    }
+  }
+
+  Future<dynamic> _writeProductStatus(_Product product, bool activating) =>
+      widget.repository.write('PATCH', '/products/${product.id}', {
         ...product.payload,
         'version': product.version,
-        'status': next,
-        'active': next == 'active',
+        'status': activating ? 'active' : 'inactive',
+        'active': activating,
       });
-      await _load();
-    } catch (failure) {
-      if (mounted) _toast(context, '$failure');
+
+  Map<String, dynamic>? _responseProduct(dynamic response) {
+    if (response is! Map) return null;
+    final data = response['data'];
+    if (data is Map) return Map<String, dynamic>.from(data);
+    return Map<String, dynamic>.from(response);
+  }
+
+  Future<void> _refreshProduct(_Product product) async {
+    final data = await widget.repository.get('/products?limit=100&offset=0');
+    final current = (data as List).whereType<Map>().cast<Map>().firstWhere(
+      (row) => '${row['id']}' == product.id,
+      orElse: () => const {},
+    );
+    if (current.isEmpty) {
+      throw const ApiFailure('Produto de crédito não encontrado.', status: 404);
     }
+    product.raw.addAll(Map<String, dynamic>.from(current));
   }
 
   int _months(String value) => int.tryParse(value.split(' ').first) ?? 1;

@@ -2,7 +2,9 @@ import 'package:flutter/material.dart' hide Icons;
 import '../../../app/theme/fluent_icons_compat.dart';
 import '../../../app/theme/app_theme.dart';
 import '../../../core/widgets/operation_feedback.dart';
+import '../domain/money.dart';
 import '../domain/repository.dart';
+import 'form.dart';
 
 class PortfolioView extends StatefulWidget {
   const PortfolioView({required this.repository, super.key});
@@ -17,6 +19,7 @@ class _PortfolioState extends State<PortfolioView> {
   final rows = <_Loan>[];
   bool loading = true;
   bool refreshing = false;
+  bool _requestInFlight = false;
   String? error;
 
   @override
@@ -26,6 +29,8 @@ class _PortfolioState extends State<PortfolioView> {
   }
 
   Future<void> _load() async {
+    if (_requestInFlight) return;
+    _requestInFlight = true;
     final initialLoad = rows.isEmpty;
     setState(() {
       loading = initialLoad;
@@ -47,6 +52,7 @@ class _PortfolioState extends State<PortfolioView> {
     } catch (failure) {
       if (mounted) setState(() => error = '$failure');
     } finally {
+      _requestInFlight = false;
       if (mounted) {
         setState(() {
           loading = false;
@@ -81,7 +87,18 @@ class _PortfolioState extends State<PortfolioView> {
         const SizedBox(height: 18),
         _filters(),
         const SizedBox(height: 12),
-        if (refreshing) const LinearProgressIndicator(),
+        if (refreshing)
+          const Align(
+            alignment: Alignment.centerRight,
+            child: Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          ),
         if (error != null)
           OutlinedButton.icon(
             onPressed: _load,
@@ -90,14 +107,9 @@ class _PortfolioState extends State<PortfolioView> {
           )
         else if (loading)
           const Padding(
-            padding: EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                SyscrediProgressIndicator(size: 42),
-                SizedBox(height: 16),
-                Text('A carregar contratos da carteira…'),
-              ],
+            padding: EdgeInsets.symmetric(vertical: 48),
+            child: CenteredLoadingState(
+              message: 'A carregar contratos da carteira…',
             ),
           )
         else if (shown.isEmpty)
@@ -342,12 +354,13 @@ class _PortfolioState extends State<PortfolioView> {
     );
   }
 
-  String _money(int cents) => '${(cents / 100).toStringAsFixed(2)} MT';
+  String _money(int cents) => money(cents);
   void _toast(BuildContext c, String m) => showFeedbackDialog(c, message: m);
 }
 
 class CollectionsView extends StatefulWidget {
-  const CollectionsView({super.key});
+  const CollectionsView({required this.repository, super.key});
+  final Repository repository;
   @override
   State<CollectionsView> createState() => _CollectionsState();
 }
@@ -355,31 +368,105 @@ class CollectionsView extends StatefulWidget {
 class _CollectionsState extends State<CollectionsView> {
   String query = '';
   String filter = 'Todos';
-  final rows = const [
-    _Collection('CR-2026-0298', 'Júlio Custódio', '1 850 MT', 'Em atraso'),
-    _Collection(
-      'CR-2026-0261',
-      'Elisabete Celeste Luis Piwalo',
-      '750 MT',
-      'Promessa',
-    ),
-    _Collection(
-      'CR-2026-0274',
-      'Armando Manuel Antonio Munhangane',
-      '1 250 MT',
-      'A vencer',
-    ),
-  ];
+  final searchController = TextEditingController();
+  final rows = <_Collection>[];
+  bool loading = true;
+  bool refreshing = false;
+  bool _requestInFlight = false;
+  String? error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    searchController.dispose();
+    super.dispose();
+  }
+
+  static String _normalized(String value) {
+    const accents = 'áàâãäéèêëíìîïóòôõöúùûüç';
+    const plain = 'aaaaaeeeeiiiiooooouuuuc';
+    var result = value.toLowerCase().trim();
+    for (var index = 0; index < accents.length; index++) {
+      result = result.replaceAll(accents[index], plain[index]);
+    }
+    return result.replaceAll(RegExp(r'\s+'), ' ');
+  }
+
+  Future<void> _load() async {
+    if (_requestInFlight) return;
+    _requestInFlight = true;
+    final initial = rows.isEmpty;
+    setState(() {
+      loading = initial;
+      refreshing = !initial;
+      error = null;
+    });
+    try {
+      final loans = await widget.repository.get('/loans?limit=100&offset=0');
+      final loaded = <_Collection>[];
+      for (final raw in loans as List) {
+        final loan = Map<String, dynamic>.from(raw as Map);
+        final loanId = '${loan['id'] ?? ''}';
+        if (loanId.isEmpty) continue;
+        final installments = await widget.repository.get(
+          '/loans/$loanId/installments',
+        );
+        for (final installmentRaw in installments as List) {
+          final installment = Map<String, dynamic>.from(installmentRaw as Map);
+          final remaining = _cents(
+            installment['remaining_cents'] ??
+                (_cents(installment['principal_cents']) +
+                    _cents(installment['interest_cents']) -
+                    _cents(installment['paid_cents'])),
+          );
+          if (remaining <= 0) continue;
+          loaded.add(_Collection.fromJson(loan, installment, remaining));
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        rows
+          ..clear()
+          ..addAll(loaded..sort((a, b) => a.dueDate.compareTo(b.dueDate)));
+      });
+    } catch (failure) {
+      if (mounted) setState(() => error = '$failure');
+    } finally {
+      _requestInFlight = false;
+      if (mounted) {
+        setState(() {
+          loading = false;
+          refreshing = false;
+        });
+      }
+    }
+  }
+
+  static int _cents(dynamic value) =>
+      (num.tryParse('${value ?? 0}') ?? 0).round();
   @override
   Widget build(BuildContext c) {
+    final normalizedQuery = _normalized(query);
     final shown = rows
         .where(
           (r) =>
               (filter == 'Todos' || r.status == filter) &&
-              (query.isEmpty ||
-                  '${r.client} ${r.contract}'.toLowerCase().contains(
-                    query.toLowerCase(),
-                  )),
+              (normalizedQuery.isEmpty ||
+                  _normalized(
+                    [
+                      r.client,
+                      r.contract,
+                      r.status,
+                      'prestacao ${r.installmentNumber}',
+                      _date(r.dueDate),
+                      _money(r.remainingCents),
+                    ].join(' '),
+                  ).contains(normalizedQuery)),
         )
         .toList();
     return Column(
@@ -390,6 +477,29 @@ class _CollectionsState extends State<CollectionsView> {
         const SizedBox(height: 18),
         _filters(),
         const SizedBox(height: 12),
+        if (refreshing)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 12),
+            child: LinearProgressIndicator(),
+          ),
+        if (error != null)
+          OutlinedButton.icon(
+            onPressed: _load,
+            icon: const Icon(Icons.refresh),
+            label: const Text('Tentar novamente'),
+          )
+        else if (loading)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 48),
+            child: CenteredLoadingState(
+              message: 'A carregar a carteira de cobranças…',
+            ),
+          )
+        else if (shown.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(24),
+            child: Text('Não existem prestações pendentes.'),
+          ),
         for (final row in shown) _row(c, row),
       ],
     );
@@ -409,9 +519,9 @@ class _CollectionsState extends State<CollectionsView> {
         ),
       ),
       FilledButton.icon(
-        onPressed: () {},
-        icon: const Icon(Icons.analytics_outlined),
-        label: const Text('Relatório'),
+        onPressed: refreshing || loading ? null : _load,
+        icon: const Icon(Icons.refresh),
+        label: const Text('Actualizar'),
       ),
     ],
   );
@@ -422,11 +532,24 @@ class _CollectionsState extends State<CollectionsView> {
       SizedBox(
         width: 280,
         child: TextField(
-          decoration: const InputDecoration(
+          controller: searchController,
+          decoration: InputDecoration(
             labelText: 'Pesquisar cliente ou contrato',
-            prefixIcon: Icon(Icons.search),
+            hintText: 'Nome, contrato, prestação, estado ou valor',
+            prefixIcon: const Icon(Icons.search),
+            suffixIcon: query.isEmpty
+                ? null
+                : IconButton(
+                    tooltip: 'Limpar pesquisa',
+                    onPressed: () => setState(() {
+                      searchController.clear();
+                      query = '';
+                    }),
+                    icon: const Icon(Icons.close),
+                  ),
           ),
           onChanged: (v) => setState(() => query = v),
+          onSubmitted: (v) => setState(() => query = v),
         ),
       ),
       SizedBox(
@@ -437,7 +560,7 @@ class _CollectionsState extends State<CollectionsView> {
           items: const [
             DropdownMenuItem(value: 'Todos', child: Text('Todos')),
             DropdownMenuItem(value: 'Em atraso', child: Text('Em atraso')),
-            DropdownMenuItem(value: 'Promessa', child: Text('Promessa')),
+            DropdownMenuItem(value: 'Vence hoje', child: Text('Vence hoje')),
             DropdownMenuItem(value: 'A vencer', child: Text('A vencer')),
           ],
           onChanged: (v) => setState(() => filter = v ?? 'Todos'),
@@ -445,6 +568,7 @@ class _CollectionsState extends State<CollectionsView> {
       ),
       OutlinedButton.icon(
         onPressed: () => setState(() {
+          searchController.clear();
           query = '';
           filter = 'Todos';
         }),
@@ -460,28 +584,36 @@ class _CollectionsState extends State<CollectionsView> {
       _card(
         c,
         'Em atraso',
-        '2 600 MT',
+        _money(
+          rows
+              .where((row) => row.status == 'Em atraso')
+              .fold(0, (sum, row) => sum + row.remainingCents),
+        ),
         Icons.warning_amber_rounded,
         Colors.orange,
       ),
       _card(
         c,
-        'Recebido este mês',
-        '8 450 MT',
+        'Vence hoje',
+        _money(
+          rows
+              .where((row) => row.status == 'Vence hoje')
+              .fold(0, (sum, row) => sum + row.remainingCents),
+        ),
         Icons.payments_outlined,
         Colors.teal,
       ),
       _card(
         c,
-        'Promessas activas',
-        '04',
+        'A vencer',
+        '${rows.where((row) => row.status == 'A vencer').length}',
         Icons.calendar_today_outlined,
         Colors.blue,
       ),
       _card(
         c,
-        'Recuperação',
-        '78,4%',
+        'Saldo em cobrança',
+        _money(rows.fold(0, (sum, row) => sum + row.remainingCents)),
         Icons.trending_up_rounded,
         Theme.of(c).colorScheme.primary,
       ),
@@ -533,26 +665,37 @@ class _CollectionsState extends State<CollectionsView> {
             ],
           ),
         ),
-        Expanded(child: Text(r.amount)),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(_money(r.remainingCents)),
+              Text(
+                'Prestação ${r.installmentNumber} · ${_date(r.dueDate)}',
+                style: Theme.of(c).textTheme.bodySmall,
+              ),
+            ],
+          ),
+        ),
         _badge(r.status),
         IconButton(
           tooltip: 'Registar pagamento',
-          onPressed: () => _toast(c, 'Pagamento registado.'),
+          onPressed: () => _registerPayment(c, r),
           icon: const Icon(Icons.payments_outlined),
         ),
         IconButton(
-          tooltip: 'Registar contacto',
-          onPressed: () => _toast(c, 'Contacto registado.'),
-          icon: const Icon(Icons.contact),
+          tooltip: 'Consultar plano de prestações',
+          onPressed: () => _showSchedule(c, r),
+          icon: const Icon(Icons.event_available_outlined),
         ),
       ],
     ),
   );
   Widget _badge(String text) {
     final color = text == 'Em atraso'
+        ? Theme.of(context).colorScheme.error
+        : text == 'Vence hoje'
         ? Colors.orange
-        : text == 'Promessa'
-        ? Colors.blue
         : Colors.teal;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -567,7 +710,88 @@ class _CollectionsState extends State<CollectionsView> {
     );
   }
 
-  void _toast(BuildContext c, String m) => showFeedbackDialog(c, message: m);
+  Future<void> _registerPayment(BuildContext context, _Collection row) async {
+    final body = await form(context, widget.repository, 'Receber pagamento', [
+      const Field(
+        'accountId',
+        'Conta de recebimento',
+        resource: 'payment-accounts',
+      ),
+      Field(
+        'amountCents',
+        'Montante (MT)',
+        kind: 'money',
+        initial: (row.remainingCents / 100).toStringAsFixed(2),
+      ),
+      const Field(
+        'method',
+        'Canal',
+        options: {
+          'cash': 'Dinheiro',
+          'bank_transfer': 'Transferência bancária',
+          'mpesa': 'M-Pesa',
+          'emola': 'e-Mola',
+          'mkesh': 'mKesh',
+          'bim': 'BIM',
+          'bci': 'BCI',
+        },
+        initial: 'cash',
+      ),
+      const Field('externalReference', 'Referência externa', optional: true),
+    ]);
+    if (body == null || !mounted) return;
+    await runWithFeedback(
+      context,
+      () async {
+        await widget.repository.write('POST', '/payments', {
+          ...body,
+          'loanId': row.loanId,
+        });
+        await _load();
+      },
+      title: 'A registar pagamento',
+      successTitle: 'Pagamento registado',
+      successMessage: 'O recebimento foi confirmado e o saldo actualizado.',
+    );
+  }
+
+  Future<void> _showSchedule(BuildContext context, _Collection row) async {
+    final installments = await widget.repository.get(
+      '/loans/${row.loanId}/installments',
+    );
+    if (!context.mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Plano · ${row.client}'),
+        content: SizedBox(
+          width: 560,
+          child: SingleChildScrollView(
+            child: Column(
+              children: [
+                for (final raw in installments as List)
+                  ListTile(
+                    title: Text('Prestação ${(raw as Map)['number']}'),
+                    subtitle: Text('${raw['due_date']}'),
+                    trailing: Text(_money(_cents(raw['remaining_cents']))),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Fechar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _money(int cents) => money(cents);
+  String _date(DateTime value) =>
+      '${value.day.toString().padLeft(2, '0')}/${value.month.toString().padLeft(2, '0')}/${value.year}';
 }
 
 class _Loan {
@@ -601,6 +825,42 @@ class _Loan {
 }
 
 class _Collection {
-  const _Collection(this.contract, this.client, this.amount, this.status);
-  final String contract, client, amount, status;
+  const _Collection({
+    required this.loanId,
+    required this.contract,
+    required this.client,
+    required this.installmentNumber,
+    required this.remainingCents,
+    required this.dueDate,
+    required this.status,
+  });
+  final String loanId, contract, client, status;
+  final int installmentNumber, remainingCents;
+  final DateTime dueDate;
+
+  factory _Collection.fromJson(
+    Map<String, dynamic> loan,
+    Map<String, dynamic> installment,
+    int remaining,
+  ) {
+    final due =
+        DateTime.tryParse('${installment['due_date']}') ?? DateTime.now();
+    final today = DateTime.now();
+    final date = DateTime(due.year, due.month, due.day);
+    final current = DateTime(today.year, today.month, today.day);
+    final status = date.isBefore(current)
+        ? 'Em atraso'
+        : date == current
+        ? 'Vence hoje'
+        : 'A vencer';
+    return _Collection(
+      loanId: '${loan['id'] ?? ''}',
+      contract: '${loan['contract_number'] ?? loan['number'] ?? loan['id']}',
+      client: '${loan['client_name'] ?? 'Cliente'}',
+      installmentNumber: int.tryParse('${installment['number']}') ?? 0,
+      remainingCents: remaining,
+      dueDate: date,
+      status: status,
+    );
+  }
 }

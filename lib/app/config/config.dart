@@ -12,6 +12,7 @@ class AppConfig {
     required this.apiUrl,
     required this.supabaseUrl,
     required this.publishableKey,
+    this.passwordRecoveryUrl = '',
   });
   static const environment = AppConfig(
     apiUrl: String.fromEnvironment(
@@ -26,8 +27,21 @@ class AppConfig {
       'SUPABASE_PUBLISHABLE_KEY',
       defaultValue: 'sb_publishable_bC-1ZfDLYrGdpIQ70BZcGQ_nOsXYcRZ',
     ),
+    passwordRecoveryUrl: String.fromEnvironment('PASSWORD_RECOVERY_URL'),
   );
-  final String apiUrl, supabaseUrl, publishableKey;
+  final String apiUrl, supabaseUrl, publishableKey, passwordRecoveryUrl;
+  String? get effectivePasswordRecoveryUrl {
+    if (passwordRecoveryUrl.trim().isNotEmpty) {
+      return passwordRecoveryUrl.trim();
+    }
+    if (kIsWeb) {
+      return Uri.base
+          .replace(path: '/', query: null, fragment: null)
+          .toString();
+    }
+    return null;
+  }
+
   String get scope =>
       sha256.convert(utf8.encode('$apiUrl|$supabaseUrl')).toString();
   String? validate({bool release = kReleaseMode}) {

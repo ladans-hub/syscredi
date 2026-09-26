@@ -24,6 +24,7 @@ class AppSession extends WorkspaceSession {
   @override
   Json? get profile => service.profile;
   String? get error => service.error;
+  bool get passwordRecovery => service.passwordRecovery;
   void enterGuest() => service.enterGuest();
 
   Future<void> login(String email, String password) =>

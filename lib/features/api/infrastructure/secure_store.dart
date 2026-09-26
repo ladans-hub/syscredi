@@ -1,4 +1,5 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../domain/repository.dart';
@@ -19,6 +20,31 @@ class DeviceSecretStore implements SecretStore {
       _storage.write(key: key, value: value);
   @override
   Future<void> delete(String key) => _storage.delete(key: key);
+}
+
+class DeviceOperationalStore implements SecretStore {
+  const DeviceOperationalStore();
+
+  @override
+  Future<String?> read(String key) async =>
+      (await SharedPreferences.getInstance()).getString(key);
+
+  @override
+  Future<void> write(String key, String value) async {
+    final saved = await (await SharedPreferences.getInstance()).setString(
+      key,
+      value,
+    );
+    if (!saved) throw StateError('Não foi possível guardar os dados locais.');
+  }
+
+  @override
+  Future<void> delete(String key) async {
+    final preferences = await SharedPreferences.getInstance();
+    if (preferences.containsKey(key) && !await preferences.remove(key)) {
+      throw StateError('Não foi possível limpar os dados locais.');
+    }
+  }
 }
 
 class SecureAuthStorage extends LocalStorage {

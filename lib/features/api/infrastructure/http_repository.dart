@@ -45,6 +45,14 @@ class HttpTransport implements Transport {
   final Future<void> Function() refreshToken;
   final Duration timeout;
   final http.Client _client;
+
+  Json? _sanitizeBody(String path, Json? body) {
+    if (body == null || path != '/organizations/members/invite') return body;
+    return Map<String, dynamic>.from(body)
+      ..remove('organizationName')
+      ..remove('emailSenderName');
+  }
+
   void _validatePath(String path) {
     if (!path.startsWith('/') ||
         path.startsWith('//') ||
@@ -82,6 +90,7 @@ class HttpTransport implements Transport {
       throw const ApiFailure('Entre novamente.', status: 401);
     }
     try {
+      final sanitizedBody = _sanitizeBody(path, body);
       final outgoing = http.Request(method, Uri.parse('$baseUrl$path'))
         ..followRedirects = false
         ..headers.addAll({
@@ -89,7 +98,7 @@ class HttpTransport implements Transport {
           'Content-Type': 'application/json',
           'Idempotency-Key': ?idempotencyKey,
         });
-      if (body != null) outgoing.body = jsonEncode(body);
+      if (sanitizedBody != null) outgoing.body = jsonEncode(sanitizedBody);
       final response = await _client
           .send(outgoing)
           .then(http.Response.fromStream)
@@ -141,6 +150,9 @@ class HttpTransport implements Transport {
           userMessage(message, status: response.statusCode),
           status: response.statusCode,
         );
+      }
+      if (response.statusCode == 204 || response.body.trim().isEmpty) {
+        return <String, dynamic>{};
       }
       if (data == null) {
         throw const ApiFailure(

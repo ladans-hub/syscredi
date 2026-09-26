@@ -9,11 +9,14 @@ import 'package:syscredi/core/widgets/equal_button_group.dart';
 
 import '../../../app/theme/app_theme.dart';
 import '../../../app/theme/design_tokens.dart';
+import '../../../app/theme/fluent_design.dart';
 import '../../../app/theme/fluent_icons_compat.dart';
 import '../../../core/csv/csv_codec.dart';
 import '../../../core/localization/user_messages.dart';
 import '../domain/money.dart';
+import '../domain/formatters.dart';
 import '../domain/repository.dart';
+import '../application/subscription_service.dart';
 import 'form.dart';
 import 'navigation.dart';
 import 'search_dialog.dart';
@@ -23,8 +26,11 @@ import 'credit_stages.dart';
 import 'portfolio_views.dart';
 import 'report_views.dart';
 import 'credit_products.dart';
+import 'client_contract_documents.dart';
+import 'finance_views.dart';
 import 'plans_view.dart';
 import 'audit_logs_view.dart';
+import 'admin_views.dart';
 import '../../settings/application/settings_controller.dart';
 import '../../settings/presentation/institution_settings_view.dart';
 import '../../settings/presentation/institution_branding.dart';
@@ -50,12 +56,10 @@ const _creditStageRoutes = {
   'credit-restructuring',
 };
 const _reportKinds = <String, String>{
-  'report-pdf': 'Em PDF',
-  'report-excel': 'Em Excel',
+  'report-exports': 'Exportações',
   'report-records': 'Registos',
   'report-letters': 'Cartas',
-  'report-monthly-bm': 'Mensal para BM',
-  'report-quarterly-bm': 'Trimestral para BM',
+  'report-bm': 'Carta para BM',
   'report-credits': 'Créditos',
   'report-clients': 'Clientes',
   'report-financial': 'Financeiros',
@@ -360,6 +364,15 @@ class Workspace extends StatefulWidget {
 }
 
 class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
+  static const _pendingRefreshInterval = Duration(seconds: 3);
+  static const _isWidgetTest = bool.fromEnvironment('FLUTTER_TEST');
+  static const _genderOptions = {
+    'male': 'Masculino',
+    'female': 'Feminino',
+    'other': 'Outro',
+    'not_informed': 'Prefere não informar',
+  };
+
   Future<void> _feedback(
     String message, {
     String title = 'Informação',
@@ -397,22 +410,26 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       'Financiamento',
       Icons.assignment_turned_in_outlined,
     ),
-    const _Section(
-      'financial-analysis',
-      'Análise financeira',
-      Icons.analytics_outlined,
-    ),
-    const _Section('credit-approval', 'Aprovar crédito', Icons.check),
-    const _Section(
-      'credit-authorization',
-      'Autorizar crédito',
-      Icons.assignment_turned_in_outlined,
-    ),
-    const _Section(
-      'credit-disbursement',
-      'Desembolso',
-      Icons.payments_outlined,
-    ),
+    if (widget.session.analyst || widget.session.manager)
+      const _Section(
+        'financial-analysis',
+        'Análise financeira',
+        Icons.analytics_outlined,
+      ),
+    if (widget.session.analyst || widget.session.manager)
+      const _Section('credit-approval', 'Aprovar crédito', Icons.check),
+    if (widget.session.manager)
+      const _Section(
+        'credit-authorization',
+        'Autorizar crédito',
+        Icons.assignment_turned_in_outlined,
+      ),
+    if (widget.session.manager)
+      const _Section(
+        'credit-disbursement',
+        'Desembolso',
+        Icons.payments_outlined,
+      ),
     const _Section(
       'credit-status',
       'Estado do crédito',
@@ -493,7 +510,9 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   Json metrics = {};
   List<Json> notifications = [];
   List<PendingWrite> pending = [];
+  String? organizationName;
   bool loading = true, refreshing = false, busy = false, foreground = true;
+  SubscriptionStatus? subscription;
   String? error;
   DateTime? updated;
   Timer? timer;
@@ -514,15 +533,59 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       if (mounted && institutionSettings.error == null)
         applyInstitutionSettings(institutionSettings.saved);
     });
+    _resolveOrganizationName();
+    _loadSubscription();
     load();
-    // Refresh is triggered on foreground and by the navbar action. A periodic
-    // timer would keep Flutter's settle loop alive indefinitely in widget tests.
+    if (!_isWidgetTest) _schedulePendingRefresh();
+  }
+
+  Future<void> _loadSubscription() async {
+    final value = await SubscriptionService(
+      api,
+    ).status(organizationId: _organizationId);
+    if (!mounted) return;
+    setState(() {
+      subscription = value;
+      if (!value.active) route = 'dashboard';
+    });
+  }
+
+  String _subscriptionSubtitle() {
+    final value = subscription;
+    if (value == null) return 'A carregar plano...';
+    if (!value.active) return 'Trial expirado';
+    if (value.trial) {
+      final days = value.trialDaysLeft;
+      return 'Plano atual: Trial · $days ${days == 1 ? 'dia' : 'dias'}';
+    }
+    final plan = switch (value.plan?.toLowerCase()) {
+      'quarterly' => 'Trimestral',
+      'semiannual' => 'Semestral',
+      'annual' => 'Anual',
+      'lifetime' => 'Vitalício',
+      final label? when label.isNotEmpty => value.plan!,
+      _ => 'Activo',
+    };
+    return 'Plano atual: $plan';
+  }
+
+  String? _subscriptionPackage() {
+    final value = subscription;
+    if (value == null || !value.active || value.trial) return null;
+    return value.package ?? 'basic';
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     foreground = state == AppLifecycleState.resumed;
-    if (foreground && !loading && !busy) load();
+    if (foreground) {
+      _refreshPending();
+      _refreshNotifications();
+      if (!loading && !busy) load();
+      if (!_isWidgetTest) _schedulePendingRefresh();
+    } else {
+      timer?.cancel();
+    }
   }
 
   @override
@@ -535,8 +598,109 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     super.dispose();
   }
 
+  void _schedulePendingRefresh() {
+    timer?.cancel();
+    if (!mounted || !foreground || route == 'plans') return;
+    timer = Timer(_pendingRefreshInterval, () async {
+      await Future.wait([_refreshPending(), _refreshNotifications()]);
+      if (mounted && foreground) _schedulePendingRefresh();
+    });
+  }
+
+  Future<void> _refreshPending() async {
+    if (!mounted || !foreground || route == 'plans') return;
+    try {
+      final value = await api.pending();
+      if (!mounted) return;
+      final changed =
+          value.length != pending.length ||
+          value.asMap().entries.any(
+            (entry) =>
+                entry.key >= pending.length ||
+                entry.value.key != pending[entry.key].key,
+          );
+      if (changed) setState(() => pending = value);
+    } catch (_) {
+      // Badge refresh is best-effort and must never interrupt the active view.
+    }
+  }
+
+  Future<void> _refreshNotifications() async {
+    if (!mounted || !foreground || route == 'plans') return;
+    try {
+      final value = await api.get('/notifications?limit=100&offset=0') as List;
+      final loaded = value
+          .map((row) => Map<String, dynamic>.from(row as Map))
+          .toList();
+      if (!mounted) return;
+      final changed =
+          loaded.length != notifications.length ||
+          loaded.asMap().entries.any(
+            (entry) =>
+                entry.key >= notifications.length ||
+                entry.value['id'] != notifications[entry.key]['id'] ||
+                entry.value['read_at'] != notifications[entry.key]['read_at'],
+          );
+      if (changed) setState(() => notifications = loaded);
+    } catch (_) {
+      // Notification badge refresh is best-effort, like pending operations.
+    }
+  }
+
+  String get _profileOrganizationName {
+    final profile = widget.session.profile ?? const <String, dynamic>{};
+    for (final key in ['organization_name', 'organizationName']) {
+      final value = '${profile[key] ?? ''}'.trim();
+      if (value.isNotEmpty) return value;
+    }
+    final resolved = organizationName?.trim() ?? '';
+    return resolved.isEmpty ? 'Organização actual' : resolved;
+  }
+
+  String get _organizationId {
+    final profile = widget.session.profile ?? const <String, dynamic>{};
+    return '${profile['organization_id'] ?? profile['organizationId'] ?? ''}'
+        .trim();
+  }
+
+  Future<void> _resolveOrganizationName() async {
+    final profile = widget.session.profile ?? const <String, dynamic>{};
+    final embedded =
+        '${profile['organization_name'] ?? profile['organizationName'] ?? ''}'
+            .trim();
+    if (embedded.isNotEmpty) {
+      if (mounted) setState(() => organizationName = embedded);
+      return;
+    }
+    final currentId =
+        '${profile['organization_id'] ?? profile['organizationId'] ?? ''}'
+            .trim();
+    if (currentId.isEmpty || profile['guest'] == true) return;
+    try {
+      final raw = await api.get('/organizations/mine') as List;
+      final current = raw.whereType<Map>().cast<Map>().firstWhere(
+        (row) => '${row['id']}' == currentId,
+        orElse: () => const {},
+      );
+      final name = '${current['name'] ?? ''}'.trim();
+      if (mounted && name.isNotEmpty) setState(() => organizationName = name);
+    } catch (_) {
+      // The profile menu falls back to a neutral label, never to an ID.
+    }
+  }
+
   Future<void> load() async {
     final current = ++generation, target = route;
+    if (target == 'plans') {
+      if (mounted && (loading || refreshing)) {
+        setState(() {
+          loading = false;
+          refreshing = false;
+          error = null;
+        });
+      }
+      return;
+    }
     final initialLoad = rows.isEmpty && metrics.isEmpty && pending.isEmpty;
     setState(() {
       loading = initialLoad;
@@ -544,8 +708,22 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       error = null;
     });
     if (_creditStageRoutes.contains(target) ||
+        _financeAreas.containsKey(target) ||
+        target == 'audit' ||
+        target == 'products' ||
+        target.startsWith('report-') ||
+        target.startsWith('admin-') ||
+        [
+          'credit-portfolio',
+          'loans',
+          'contracts',
+          'portfolio',
+          'collections',
+        ].contains(target) ||
         target == 'settings' ||
+        target == 'general-settings' ||
         target == 'organization-settings') {
+      await _refreshPending();
       if (mounted && current == generation) {
         setState(() {
           loading = false;
@@ -560,8 +738,11 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       final notificationsFuture = api
           .get('/notifications?limit=3&offset=0')
           .catchError((_) => <Json>[]);
+      final pendingFuture = api.pending().catchError(
+        (_) => List<PendingWrite>.from(pending),
+      );
       final value = target == 'pending'
-          ? await api.pending()
+          ? await pendingFuture
           : await api.get(
               target == 'dashboard' || target == 'simulator'
                   ? '/dashboard'
@@ -572,11 +753,13 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                   : '/$target?limit=50&offset=$offset&q=${Uri.encodeQueryComponent(search.text.trim())}',
             );
       final notificationValue = await notificationsFuture;
+      final pendingValue = await pendingFuture;
       if (!mounted || current != generation) return;
       setState(() {
         notifications = (notificationValue as List)
             .map((row) => Map<String, dynamic>.from(row as Map))
             .toList();
+        pending = pendingValue;
         if (target == 'pending') {
           pending = value as List<PendingWrite>;
         } else if (target == 'dashboard' ||
@@ -604,6 +787,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
 
   Future<void> select(String next) async {
     if (busy) return;
+    if (subscription?.active == false && next != 'plans') next = 'dashboard';
     if ((route == 'settings' || route == 'organization-settings') &&
         next != route) {
       final state = institutionSettingsKey.currentState;
@@ -615,10 +799,22 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       offset = 0;
       rows = [];
       metrics = {};
-      pending = [];
       updated = null;
       search.clear();
     });
+    if (next == 'plans') {
+      timer?.cancel();
+      if (mounted) {
+        setState(() {
+          loading = false;
+          refreshing = false;
+          error = null;
+        });
+      }
+      return;
+    } else if (!_isWidgetTest) {
+      _schedulePendingRefresh();
+    }
     load();
   }
 
@@ -653,6 +849,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     } finally {
       if (mounted) {
         setState(() => busy = false);
+        await _refreshPending();
         await load();
       }
     }
@@ -734,7 +931,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         Field('name', 'Nome'),
         Field('document', 'Documento'),
         Field('phone', 'Telefone'),
-        Field('gender', 'Género', optional: true),
+        Field('gender', 'Género', options: _genderOptions),
         Field('birthDate', 'Data de nascimento', kind: 'date', optional: true),
         Field('relationship', 'Relação'),
       ],
@@ -788,7 +985,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         Field('name', 'Nome'),
         Field('document', 'Documento'),
         Field('phone', 'Telefone'),
-        Field('gender', 'Género', optional: true),
+        Field('gender', 'Género', options: _genderOptions),
         Field('birthDate', 'Data de nascimento', kind: 'date', optional: true),
         Field('relationship', 'Relação'),
       ],
@@ -1008,28 +1205,20 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     ),
     Field('phone', 'Telefone', initial: row?['phone']?.toString() ?? ''),
     Field(
-      'documentType',
-      'Tipo de documento',
-      optional: true,
-      initial: row?['document_type']?.toString() ?? '',
-    ),
-    Field(
-      'documentExpiry',
-      'Validade do documento',
-      kind: 'date',
-      optional: true,
-      initial: row?['document_expiry']?.toString() ?? '',
-    ),
-    Field(
       'document',
       'Número do documento',
       initial: row?['document']?.toString() ?? '',
     ),
     Field(
-      'issuePlace',
-      'Local de emissão',
-      optional: true,
-      initial: row?['issue_place']?.toString() ?? '',
+      'activity',
+      'Actividade profissional',
+      initial: row?['activity']?.toString() ?? '',
+    ),
+    Field(
+      'location',
+      'Localização',
+      initial:
+          row?['location']?.toString() ?? row?['address']?.toString() ?? '',
     ),
     Field(
       'birthDate',
@@ -1039,107 +1228,47 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       initial: row?['birth_date']?.toString() ?? '',
     ),
     Field(
-      'nationality',
-      'Nacionalidade',
-      optional: true,
-      initial: row?['nationality']?.toString() ?? '',
-    ),
-    Field(
-      'street',
-      'Rua',
-      optional: true,
-      initial: row?['street']?.toString() ?? '',
-    ),
-    Field(
-      'neighborhood',
-      'Bairro',
-      optional: true,
-      initial: row?['neighborhood']?.toString() ?? '',
-    ),
-    Field(
-      'houseNumber',
-      'Número da casa',
-      optional: true,
-      initial: row?['house_number']?.toString() ?? '',
-    ),
-    Field(
-      'quarter',
-      'Quarteirão',
-      optional: true,
-      initial: row?['quarter']?.toString() ?? '',
-    ),
-    Field(
-      'city',
-      'Cidade',
-      optional: true,
-      initial: row?['city']?.toString() ?? '',
-    ),
-    Field(
       'maritalStatus',
       'Estado civil',
       optional: true,
       initial: row?['marital_status']?.toString() ?? '',
     ),
     Field(
-      'politicallyExposed',
-      'Politicamente exposto?',
-      optional: true,
-      initial: row?['politically_exposed']?.toString() ?? '',
-    ),
-    Field(
-      'registrationDate',
-      'Data de cadastro',
-      kind: 'date',
-      optional: true,
-      initial: row?['registration_date']?.toString() ?? '',
-    ),
-    Field(
       'gender',
       'Género',
-      optional: true,
+      options: _genderOptions,
       initial: row?['gender']?.toString() ?? '',
     ),
     Field(
-      'status',
-      'Situação',
+      'address',
+      'Endereço',
       optional: true,
-      initial: row?['status']?.toString() ?? '',
+      initial: row?['address']?.toString() ?? '',
     ),
     Field(
-      'notify',
-      'Notificar?',
+      'monthlyIncomeCents',
+      'Rendimento mensal (MT)',
+      kind: 'money',
       optional: true,
-      initial: row?['notify']?.toString() ?? '',
+      initial: row?['monthly_income_cents'] == null
+          ? ''
+          : '${(int.tryParse('${row?['monthly_income_cents']}') ?? 0) / 100}',
     ),
     Field(
-      'receiveNotifications',
-      'Receber notificações?',
+      'monthlyExpensesCents',
+      'Despesas mensais (MT)',
+      kind: 'money',
       optional: true,
-      initial: row?['receive_notifications']?.toString() ?? '',
+      initial: row?['monthly_expenses_cents'] == null
+          ? ''
+          : '${(int.tryParse('${row?['monthly_expenses_cents']}') ?? 0) / 100}',
     ),
     Field(
-      'photo',
-      'Foto do cliente',
+      'dependents',
+      'Dependentes',
+      kind: 'nonNegativeInt',
       optional: true,
-      initial: row?['photo']?.toString() ?? '',
-    ),
-    Field(
-      'location',
-      'Localização GPS',
-      optional: true,
-      initial: row?['location']?.toString() ?? '',
-    ),
-    Field(
-      'observations',
-      'Observações',
-      optional: true,
-      initial: row?['observations']?.toString() ?? '',
-    ),
-    Field(
-      'manager',
-      'Gestor',
-      optional: true,
-      initial: row?['manager']?.toString() ?? '',
+      initial: row?['dependents']?.toString() ?? '',
     ),
   ];
   List<Field> _paymentFields([String? loanId]) => [
@@ -1267,6 +1396,12 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       Field('name', 'Nome', initial: '${row['name'] ?? ''}'),
       Field('document', 'Documento', initial: '${row['document'] ?? ''}'),
       Field('phone', 'Telefone', initial: '${row['phone'] ?? ''}'),
+      Field(
+        'gender',
+        'Género',
+        options: _genderOptions,
+        initial: '${row['gender'] ?? ''}',
+      ),
       Field('relationship', 'Relação', initial: '${row['relationship'] ?? ''}'),
     ]);
     if (body != null && mounted) {
@@ -1383,6 +1518,9 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   String display(String key, dynamic value) {
     if (value == null) return '—';
     if (key.endsWith('_cents')) return money(value);
+    if (const {'phone', 'telephone', 'contact', 'mobile'}.contains(key)) {
+      return formatPhone(value);
+    }
     if (key == 'annual_rate_bps') return '${intValue(value) / 100}%';
     if (value is bool) return value ? 'Sim' : 'Não';
     if (key == 'stage') return _stages[value] ?? '$value';
@@ -1574,9 +1712,22 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
           ].contains(route));
 
   Widget _dashboardBody() {
-    final activeClients = '${metrics['clients'] ?? 248}';
-    final pendingRequests = '${metrics['pending_requests'] ?? 18}';
-    final outstanding = money(metrics['outstanding_cents'] ?? 186450000);
+    int metric(String key) => int.tryParse('${metrics[key] ?? 0}') ?? 0;
+    final activeClients = '${metric('clients')}';
+    final activeLoans = metric('active_loans');
+    final pendingRequests = '${metric('pending_requests')}';
+    final outstanding = money(metrics['outstanding_cents']);
+    final overdue = metric('overdue_cents');
+    final disbursed = metric('disbursed_this_month_cents');
+    final collected = metric('collected_this_month_cents');
+    final trends = _dashboardTrends();
+    final disbursedTrend = [
+      for (final row in trends) intValue(row['disbursed_cents']),
+    ];
+    final collectedTrend = [
+      for (final row in trends) intValue(row['collected_cents']),
+    ];
+    final requestTrend = [for (final row in trends) intValue(row['requests'])];
     return LayoutBuilder(
       builder: (context, viewport) {
         final scheme = Theme.of(context).colorScheme;
@@ -1627,43 +1778,43 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
               children: [
                 _remoteKpi(
                   'Créditos concedidos',
-                  '114.000,00 MZN',
-                  '20 este mês',
+                  money(disbursed),
+                  '$activeLoans créditos activos',
                   Icons.credit_card_outlined,
                   scheme.primary,
                 ),
                 _remoteKpi(
                   'Capital em atraso',
-                  '29.647,00 MZN',
-                  '7 contratos',
+                  money(overdue),
+                  'prestações vencidas',
                   Icons.warning_amber_rounded,
                   scheme.error,
                 ),
                 _remoteKpi(
                   'Juros em atraso',
-                  '6.457,00 MZN',
-                  '7 contratos',
+                  money(0),
+                  'não separado pela API',
                   Icons.error_outline_rounded,
                   scheme.error,
                 ),
                 _remoteKpi(
                   'Clientes activos',
                   activeClients,
-                  '9 novos este mês',
+                  'clientes cadastrados',
                   Icons.people_alt_outlined,
                   scheme.secondary,
                 ),
                 _remoteKpi(
                   'Desembolso diário',
-                  '3.000,00 MZN',
-                  '1 operação',
+                  money(disbursed),
+                  'total do mês actual',
                   Icons.payments_outlined,
                   scheme.tertiary,
                 ),
                 _remoteKpi(
                   'Reembolso diário',
-                  '6.500,00 MZN',
-                  '2 operações',
+                  money(collected),
+                  'total do mês actual',
                   Icons.assignment_turned_in_outlined,
                   scheme.secondary,
                 ),
@@ -1689,26 +1840,50 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
             _dashboardPanels(viewport.maxWidth),
             const SizedBox(height: 20),
             _chartPanel(
-              'Despesas 2026',
-              'Despesas pendentes',
-              'Despesas pagas',
+              'Desembolsos e cobranças',
+              'Desembolsado',
+              'Cobrado',
               scheme.error,
               scheme.secondary,
-              [0, 0, 0, 0, 1800, 2400, 8600, 1200, 0, 0, 0, 0],
+              _interleaveDashboardSeries(disbursedTrend, collectedTrend),
             ),
             const SizedBox(height: 20),
             _chartPanel(
-              'Empréstimos pagos / pendentes 2026',
-              'Empréstimos pagos',
-              'Empréstimos pendentes',
+              'Pedidos de crédito',
+              'Pedidos criados',
+              'Referência',
               scheme.secondary,
               scheme.error,
-              [0, 0, 0, 0, 100, 315, 265, 305, 60, 0, 0, 0],
+              _interleaveDashboardSeries(
+                requestTrend,
+                List<num>.filled(requestTrend.length, 0),
+              ),
             ),
           ],
         );
       },
     );
+  }
+
+  List<Json> _dashboardTrends() {
+    final raw = metrics['trends'];
+    if (raw is! Map) return const [];
+    final rows = raw['12'] ?? raw['6'] ?? raw['3'];
+    if (rows is! List) return const [];
+    return rows
+        .whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList();
+  }
+
+  List<num> _interleaveDashboardSeries(List<num> first, List<num> second) {
+    final values = <num>[];
+    final length = math.max(first.length, second.length);
+    for (var index = 0; index < length; index++) {
+      values.add(index < first.length ? first[index] : 0);
+      values.add(index < second.length ? second[index] : 0);
+    }
+    return values;
   }
 
   Widget _periodChip() {
@@ -1720,17 +1895,37 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: scheme.outlineVariant),
       ),
-      child: const Row(
+      child: Row(
         children: [
-          Icon(Icons.calendar_today_outlined, size: 16),
-          SizedBox(width: 8),
+          const Icon(Icons.calendar_today_outlined, size: 16),
+          const SizedBox(width: 8),
           Text(
-            'Setembro 2026',
-            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+            _dashboardPeriodLabel(),
+            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
           ),
         ],
       ),
     );
+  }
+
+  String _dashboardPeriodLabel() {
+    final date = DateTime.tryParse('${metrics['as_of'] ?? ''}')?.toLocal();
+    if (date == null) return 'Dados actuais';
+    const months = [
+      'Janeiro',
+      'Fevereiro',
+      'Março',
+      'Abril',
+      'Maio',
+      'Junho',
+      'Julho',
+      'Agosto',
+      'Setembro',
+      'Outubro',
+      'Novembro',
+      'Dezembro',
+    ];
+    return '${months[date.month - 1]} ${date.year}';
   }
 
   Widget _dashboardSplit(double width) {
@@ -2388,7 +2583,15 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   }
 
   Widget _body() {
-    if (loading && rows.isEmpty && !_creditStageRoutes.contains(route)) {
+    if (subscription?.active == false && route != 'plans') {
+      return _expiredTrialHome(subscription!);
+    }
+    final hasLoadedContent = switch (route) {
+      'dashboard' || 'simulator' || 'reports' => metrics.isNotEmpty,
+      'pending' => pending.isNotEmpty,
+      _ => rows.isNotEmpty,
+    };
+    if (loading && !hasLoadedContent && !_creditStageRoutes.contains(route)) {
       return _loadingState(_loadingMessageForRoute(route));
     }
     if (route == 'risk-scores') {
@@ -2410,7 +2613,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          RiskCenterView(rows: rows),
+          RiskCenterView(rows: rows, repository: api, onRefresh: load),
           if (offset > 0 || rows.length == 50)
             Wrap(
               spacing: 12,
@@ -2438,48 +2641,18 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         ],
       );
     }
-    if (route == 'audit') {
-      return Column(
-        children: [
-          AuditLogsView(rows: rows),
-          if (offset > 0 || rows.length == 50)
-            Padding(
-              padding: const EdgeInsets.only(top: 16),
-              child: Wrap(
-                spacing: 12,
-                children: [
-                  OutlinedButton(
-                    onPressed: !loading && offset > 0
-                        ? () {
-                            offset -= 50;
-                            load();
-                          }
-                        : null,
-                    child: const Text('50 registos anteriores'),
-                  ),
-                  OutlinedButton(
-                    onPressed: !loading && rows.length == 50
-                        ? () {
-                            offset += 50;
-                            load();
-                          }
-                        : null,
-                    child: const Text('Carregar próximos registos'),
-                  ),
-                ],
-              ),
-            ),
-        ],
-      );
-    }
+    if (route == 'audit') return AuditLogsView(repository: api);
     if (route == 'credit-portfolio' ||
         route == 'loans' ||
         route == 'contracts' ||
         route == 'portfolio') {
       return PortfolioView(repository: api);
     }
-    if (route == 'collections') route = 'payments';
+    if (route == 'collections') return CollectionsView(repository: api);
     if (route == 'products') return CreditProductsView(repository: api);
+    if (_financeAreas.containsKey(route)) {
+      return FinanceView(area: _financeAreas[route]!, repository: api);
+    }
     route = switch (route) {
       'finance-balances' => 'accounts',
       'finance-income' || 'finance-expenses' => 'cash-entries',
@@ -2495,23 +2668,39 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         repository: api,
       );
     }
-    route = switch (route) {
-      'admin-accounting' => 'journal',
-      'admin-sync' => 'sync-operations',
-      'admin-aml' => 'aml-alerts',
-      'admin-users' => 'users',
-      'admin-backup' => 'backup-archives',
-      _ => route,
-    };
-    if (route == 'plans') return PlansView(repository: api);
-    if (_creditStageRoutes.contains(route)) {
-      return CreditStagesView(stage: route, repository: api);
+    if (route.startsWith('admin-')) {
+      return AdminView(
+        kind: route.substring('admin-'.length),
+        repository: api,
+        canManage: widget.session.manager,
+      );
     }
-    if (route == 'settings' || route == 'organization-settings') {
+    if (route == 'plans') {
+      return PlansView(
+        key: const ValueKey('syscredi-plans'),
+        repository: api,
+        organizationId: _organizationId,
+        onActivated: () async {
+          await _loadSubscription();
+          if (mounted) select('dashboard');
+        },
+      );
+    }
+    if (_creditStageRoutes.contains(route)) {
+      return CreditStagesView(
+        stage: route,
+        repository: api,
+        role: '${widget.session.profile?['role'] ?? 'operator'}',
+      );
+    }
+    if (route == 'settings' ||
+        route == 'general-settings' ||
+        route == 'organization-settings') {
       return InstitutionSettingsView(
         key: institutionSettingsKey,
         controller: institutionSettings,
         canAdminister: widget.session.manager,
+        general: route == 'general-settings',
       );
     }
     if ({
@@ -2523,7 +2712,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       return _clientsBody();
     }
     if (route == 'dashboard') return _dashboardBody();
-    if (route == 'simulator') return const SimulatorPanel();
+    if (route == 'simulator') return SimulatorPanel(repository: api);
     if (route == 'simulator' || route == 'reports') {
       final cards = Wrap(
         spacing: 16,
@@ -2750,19 +2939,206 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     );
   }
 
-  Widget _loadingState(String message) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 48),
-    child: Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const SyscrediProgressIndicator(size: 42),
-          const SizedBox(height: 16),
-          Text(message, textAlign: TextAlign.center),
-        ],
+  Widget _expiredTrialHome(SubscriptionStatus status) {
+    final scheme = Theme.of(context).colorScheme;
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 760),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 36),
+          child: FluentSurface(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 76,
+                  height: 76,
+                  decoration: BoxDecoration(
+                    color: scheme.errorContainer,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.verified_outlined,
+                    color: scheme.onErrorContainer,
+                    size: 38,
+                  ),
+                ),
+                const SizedBox(height: 22),
+                const Text(
+                  'O período de avaliação terminou',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  'O plano padrão inclui 7 dias gratuitos. Para continuar a utilizar o Syscredi, escolha um plano e envie os identificadores do dispositivo e da organização ao proprietário.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 15,
+                    height: 1.45,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 26),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: scheme.surfaceContainerHighest.withValues(
+                      alpha: .46,
+                    ),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: Color.lerp(
+                        scheme.outlineVariant,
+                        scheme.primary,
+                        .2,
+                      )!,
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            width: 38,
+                            height: 38,
+                            decoration: BoxDecoration(
+                              color: scheme.primaryContainer,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Icon(
+                              Icons.verified_outlined,
+                              color: scheme.onPrimaryContainer,
+                              size: 20,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Identificadores para activação',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  'A licença é associada à organização e controla os dispositivos autorizados.',
+                                  style: TextStyle(
+                                    color: scheme.onSurfaceVariant,
+                                    fontSize: 13,
+                                    height: 1.35,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          OutlinedButton.icon(
+                            onPressed: () async {
+                              await Clipboard.setData(
+                                ClipboardData(
+                                  text:
+                                      'Dispositivo: ${status.deviceId}\nOrganização: $_organizationId',
+                                ),
+                              );
+                              if (!mounted) return;
+                              await _feedback(
+                                'Os identificadores foram copiados.',
+                                title: 'IDs copiados',
+                                success: true,
+                              );
+                            },
+                            icon: const Icon(Icons.document, size: 17),
+                            label: const Text('Copiar ambos'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 18),
+                      _ExpiredTrialIdentifier(
+                        icon: Icons.card_membership_outlined,
+                        label: 'ID do dispositivo',
+                        value: status.deviceId,
+                        onCopy: () async {
+                          await Clipboard.setData(
+                            ClipboardData(text: status.deviceId),
+                          );
+                          if (!mounted) return;
+                          await _feedback(
+                            'O ID do dispositivo foi copiado.',
+                            title: 'ID copiado',
+                            success: true,
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                      _ExpiredTrialIdentifier(
+                        icon: Icons.business_outlined,
+                        label: 'ID da organização',
+                        value: _organizationId,
+                        onCopy: () async {
+                          await Clipboard.setData(
+                            ClipboardData(text: _organizationId),
+                          );
+                          if (!mounted) return;
+                          await _feedback(
+                            'O ID da organização foi copiado.',
+                            title: 'ID copiado',
+                            success: true,
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 14),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            Icons.help_outline,
+                            size: 17,
+                            color: scheme.primary,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Envie estes IDs ao proprietário para gerar o código de activação. O limite de dispositivos depende do pacote Básico, Pro ou Premium.',
+                              style: TextStyle(
+                                color: scheme.onSurfaceVariant,
+                                fontSize: 13,
+                                height: 1.4,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: () => select('plans'),
+                    icon: const Icon(Icons.verified_outlined),
+                    label: const Text('Ver planos e activar'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
-    ),
-  );
+    );
+  }
+
+  Widget _loadingState(String message) =>
+      CenteredLoadingState(message: message);
 
   String _loadingMessageForRoute(String value) => switch (value) {
     'clients' => 'A carregar clientes…',
@@ -2953,6 +3329,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       });
       await widget.session.verify();
       if (mounted) {
+        await _resolveOrganizationName();
         setState(() {
           route = 'dashboard';
           rows = [];
@@ -3123,7 +3500,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                                 ],
                               ),
                             ),
-                            DataCell(Text('${row['phone'] ?? '—'}')),
+                            DataCell(Text(formatPhone(row['phone']))),
                             DataCell(Text('${row['document'] ?? '—'}')),
                             DataCell(_clientStatusBadge(row)),
                             DataCell(
@@ -3376,26 +3753,31 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                 dialogContext,
                 'Contrato de crédito',
                 'contrato.pdf',
+                row,
               ),
               _documentAction(
                 dialogContext,
                 'Contrato de confissão de dívida',
                 'contrato_confissao.pdf',
+                row,
               ),
               _documentAction(
                 dialogContext,
                 'Contrato de garantia',
                 'contrato_de_garantia.pdf',
+                row,
               ),
               _documentAction(
                 dialogContext,
                 'Estado do crédito',
                 'credito_estado.pdf',
+                row,
               ),
               _documentAction(
                 dialogContext,
                 'Recibo de desembolso',
                 'recibo_de_desembolso.pdf',
+                row,
               ),
             ],
           ),
@@ -3408,6 +3790,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     BuildContext dialogContext,
     String label,
     String filename,
+    Json client,
   ) => ListTile(
     leading: const Icon(FluentSystemIcons.picture_as_pdf_outlined),
     title: Text(label),
@@ -3415,35 +3798,63 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     trailing: const Icon(FluentSystemIcons.download),
     onTap: () {
       Navigator.pop(dialogContext);
-      _downloadClientDocument(label, filename);
+      _downloadClientDocument(label, filename, client);
     },
   );
 
-  Future<void> _downloadClientDocument(String title, String filename) async {
+  Future<void> _downloadClientDocument(
+    String title,
+    String filename,
+    Json client,
+  ) async {
     try {
       final location = await getSaveLocation(suggestedName: filename);
       if (location == null) return;
-      final document = pw.Document();
-      final branding = InstitutionDocument();
-      document.addPage(
-        pw.MultiPage(
-          pageTheme: branding.pageTheme(),
-          header: branding.header,
-          footer: branding.footer,
-          build: (_) => [
-            pw.SizedBox(height: 24),
-            pw.Text(
-              title,
-              style: pw.TextStyle(fontSize: 22, fontWeight: pw.FontWeight.bold),
-            ),
-            pw.SizedBox(height: 18),
-            pw.Text('Documento de demonstração'),
-            branding.signature('Comprovativo'),
-          ],
-        ),
+      final branding = await InstitutionDocument.create();
+      Json? loan;
+      Json? guarantee;
+      try {
+        final loadedLoans = await api.get(
+          '/loans?limit=100&offset=0&clientId=${Uri.encodeQueryComponent('${client['id']}')}',
+        );
+        final loans = loadedLoans is Map && loadedLoans['data'] is List
+            ? loadedLoans['data'] as List
+            : loadedLoans as List;
+        if (loans.isNotEmpty)
+          loan = Map<String, dynamic>.from(loans.first as Map);
+      } catch (_) {
+        // The document remains available with explicit placeholders.
+      }
+      if (filename == 'contrato_de_garantia.pdf') {
+        try {
+          final loaded = await api.get(
+            '/client-guarantors?limit=100&offset=0&clientId=${Uri.encodeQueryComponent('${client['id']}')}',
+          );
+          final rows = loaded is Map && loaded['data'] is List
+              ? loaded['data'] as List
+              : loaded as List;
+          if (rows.isNotEmpty) {
+            guarantee = Map<String, dynamic>.from(rows.first as Map);
+          }
+        } catch (_) {
+          // Missing guarantee data is represented by placeholders.
+        }
+      }
+      final contracts = ClientContractDocuments(
+        branding: branding,
+        client: client,
       );
+      final bytes = switch (filename) {
+        'contrato.pdf' => await contracts.creditContract(loan: loan),
+        'contrato_confissao.pdf' => await contracts.debtConfession(loan: loan),
+        'contrato_de_garantia.pdf' => await contracts.guaranteeContract(
+          loan: loan,
+          guarantee: guarantee,
+        ),
+        _ => await _genericClientDocument(title, branding),
+      };
       await XFile.fromData(
-        await document.save(),
+        bytes,
         mimeType: 'application/pdf',
       ).saveTo(location.path);
       if (mounted) {
@@ -3462,6 +3873,34 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         );
       }
     }
+  }
+
+  Future<Uint8List> _genericClientDocument(
+    String title,
+    InstitutionDocument branding,
+  ) async {
+    final document = pw.Document();
+    document.addPage(
+      pw.MultiPage(
+        pageTheme: branding.pageTheme(),
+        header: branding.header,
+        footer: branding.footer,
+        build: (_) => [
+          branding.title(
+            title,
+            subtitle: 'Documento emitido pelo sistema de gestão de crédito.',
+          ),
+          branding.information([
+            'Emitido em: ${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}',
+            'Formato: A4',
+          ]),
+          pw.SizedBox(height: 18),
+          pw.Text('${branding.data['documentNotes']}'),
+          branding.signature('Comprovativo'),
+        ],
+      ),
+    );
+    return document.save();
   }
 
   Future<void> _removeClientRecord(
@@ -3647,9 +4086,12 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     'accounts' || 'account-transfers' => Area.accounts,
     'cash-entries' || 'reconciliations' || 'journal' => Area.treasury,
     'reports' => Area.reports,
+    _ when route.startsWith('report-') => Area.reports,
     'audit' => Area.audit,
     'plans' => Area.plans,
-    'settings' || 'organization-settings' => Area.settings,
+    'settings' => Area.settings,
+    'organization-settings' => Area.settings,
+    'general-settings' => Area.generalSettings,
     _ => Area.dashboard,
   };
 
@@ -3672,7 +4114,8 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     Area.treasury => 'cash-entries',
     Area.reports => 'reports',
     Area.audit => 'audit',
-    Area.settings => 'settings',
+    Area.settings => 'organization-settings',
+    Area.generalSettings => 'general-settings',
     Area.accounting => 'admin-accounting',
     Area.sync => 'admin-sync',
     Area.aml => 'admin-aml',
@@ -3782,7 +4225,6 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       offset = 0;
       rows = [];
       metrics = {};
-      pending = [];
       updated = null;
       search.text = selection.query;
     });
@@ -3794,8 +4236,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     final name = TextEditingController(text: '${profile['name'] ?? ''}');
     final email = TextEditingController(text: '${profile['email'] ?? ''}');
     final phone = TextEditingController(text: '${profile['phone'] ?? ''}');
-    final organization =
-        '${profile['organization_name'] ?? profile['organization'] ?? profile['organization_id'] ?? profile['organizationId'] ?? 'Organização actual'}';
+    final organization = _profileOrganizationName;
     final role = _roles[profile['role']] ?? '${profile['role'] ?? 'Operador'}';
     try {
       final changes = await showDialog<Json>(
@@ -4037,6 +4478,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     required IconData icon,
     required VoidCallback onPressed,
     int badge = 0,
+    bool urgent = false,
   }) => IconButton(
     tooltip: tooltip,
     onPressed: onPressed,
@@ -4053,7 +4495,9 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
               padding: const EdgeInsets.symmetric(horizontal: 4),
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.primary,
+                color: urgent
+                    ? Theme.of(context).colorScheme.error
+                    : Theme.of(context).colorScheme.primary,
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
                   color: Theme.of(context).colorScheme.surface,
@@ -4063,7 +4507,9 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
               child: Text(
                 badge > 99 ? '99+' : '$badge',
                 style: TextStyle(
-                  color: Theme.of(context).colorScheme.onPrimary,
+                  color: urgent
+                      ? Theme.of(context).colorScheme.onError
+                      : Theme.of(context).colorScheme.onPrimary,
                   fontSize: 9,
                   fontWeight: FontWeight.w800,
                   height: 1,
@@ -4081,6 +4527,16 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     _ => FluentSystemIcons.check,
   };
 
+  bool _isUrgentPending(PendingWrite operation) {
+    final path = operation.path.toLowerCase();
+    return path.contains('/disburse') ||
+        path.contains('/payments') ||
+        path.contains('/cash-entries') ||
+        path.contains('/account-transfers') ||
+        path.contains('/loan-adjustments') ||
+        path.contains('/authorization');
+  }
+
   String _notificationTime(Object? value) {
     final created = DateTime.tryParse('$value')?.toLocal();
     if (created == null) return '';
@@ -4094,7 +4550,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
 
   Future<void> _markNotificationsRead() async {
     final unread = notifications
-        .where((row) => row['read_at'] == null)
+        .where((row) => row['read_at'] == null && row['archived_at'] == null)
         .toList();
     for (final row in unread) {
       await api.write('PATCH', '/notifications/${row['id']}/read', {});
@@ -4107,16 +4563,93 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     });
   }
 
+  Future<void> _markNotificationRead(Json notification) async {
+    if (notification['read_at'] != null) return;
+    await api.write('PATCH', '/notifications/${notification['id']}/read', {});
+    if (!mounted) return;
+    setState(() {
+      notification['read_at'] = DateTime.now().toUtc().toIso8601String();
+    });
+  }
+
+  Future<void> _archiveNotification(Json notification) async {
+    await api.write(
+      'PATCH',
+      '/notifications/${notification['id']}/archive',
+      {},
+    );
+    if (!mounted) return;
+    setState(() {
+      notification['archived_at'] = DateTime.now().toUtc().toIso8601String();
+      notification['read_at'] ??= DateTime.now().toUtc().toIso8601String();
+    });
+  }
+
+  Future<void> _restoreNotification(Json notification) async {
+    await api.write(
+      'PATCH',
+      '/notifications/${notification['id']}/restore',
+      {},
+    );
+    if (!mounted) return;
+    setState(() => notification['archived_at'] = null);
+  }
+
+  Future<List<Json>> _loadNotificationCenter() async {
+    try {
+      final value = await api.get('/notifications?limit=100&offset=0') as List;
+      final loaded = value
+          .map((row) => Map<String, dynamic>.from(row as Map))
+          .toList();
+      if (mounted) setState(() => notifications = loaded);
+      return loaded;
+    } catch (_) {
+      if (notifications.isNotEmpty) {
+        return notifications
+            .map((row) => Map<String, dynamic>.from(row))
+            .toList();
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> _showNotificationCenter() async {
+    await showMenu<void>(
+      context: context,
+      position: const RelativeRect.fromLTRB(100000, 64, 16, 0),
+      color: Colors.transparent,
+      elevation: 0,
+      constraints: const BoxConstraints(minWidth: 390, maxWidth: 390),
+      items: [
+        PopupMenuItem<void>(
+          enabled: false,
+          padding: EdgeInsets.zero,
+          child: _NotificationCenterPopup(
+            load: _loadNotificationCenter,
+            markRead: _markNotificationRead,
+            markAllRead: _markNotificationsRead,
+            archive: _archiveNotification,
+            restore: _restoreNotification,
+            timeLabel: _notificationTime,
+            iconFor: _notificationIcon,
+            onPending: () {
+              Navigator.pop(context);
+              select('pending');
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _notificationMenu() {
     final scheme = Theme.of(context).colorScheme;
-    final badge = notifications.where((row) => row['read_at'] == null).length;
-    return PopupMenuButton<String>(
+    final badge = notifications
+        .where((row) => row['read_at'] == null && row['archived_at'] == null)
+        .length;
+    return IconButton(
       tooltip: 'Centro de notificações',
-      offset: const Offset(0, 12),
-      constraints: const BoxConstraints(minWidth: 360, maxWidth: 390),
-      color: scheme.surfaceContainerHigh,
-      elevation: 8,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      onPressed: _showNotificationCenter,
       icon: Stack(
         clipBehavior: Clip.none,
         children: [
@@ -4134,7 +4667,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                   border: Border.all(color: scheme.surface, width: 1.5),
                 ),
                 child: Text(
-                  '$badge',
+                  badge > 99 ? '99+' : '$badge',
                   style: TextStyle(
                     color: scheme.onPrimary,
                     fontSize: 9,
@@ -4145,110 +4678,6 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
             ),
         ],
       ),
-      onSelected: (value) async {
-        if (value == 'pending') select('pending');
-        if (value == 'read') {
-          try {
-            await _markNotificationsRead();
-            if (!mounted) return;
-            await _feedback(
-              'Notificações marcadas como lidas.',
-              title: 'Notificações actualizadas',
-              success: true,
-            );
-          } catch (error) {
-            if (!mounted) return;
-            await _feedback(
-              '$error',
-              title: 'Notificações não actualizadas',
-              success: false,
-            );
-          }
-        }
-      },
-      itemBuilder: (_) => [
-        PopupMenuItem<String>(
-          enabled: false,
-          height: 58,
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  'Centro de notificações',
-                  style: TextStyle(
-                    color: scheme.onSurface,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 16,
-                  ),
-                ),
-              ),
-              Text(
-                '$badge novas',
-                style: TextStyle(color: scheme.primary, fontSize: 12),
-              ),
-            ],
-          ),
-        ),
-        const PopupMenuDivider(),
-        for (final notification in notifications)
-          PopupMenuItem<String>(
-            enabled: false,
-            height: 72,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(
-                  _notificationIcon('${notification['category'] ?? ''}'),
-                  color: scheme.primary,
-                  size: 20,
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${notification['title'] ?? ''}',
-                        style: const TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                      Text(
-                        '${notification['body'] ?? ''}',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: scheme.onSurfaceVariant,
-                          fontSize: 12,
-                        ),
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        _notificationTime(notification['created_at']),
-                        style: TextStyle(color: scheme.primary, fontSize: 11),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        const PopupMenuDivider(),
-        const PopupMenuItem<String>(
-          value: 'pending',
-          child: ListTile(
-            dense: true,
-            leading: Icon(FluentSystemIcons.pending),
-            title: Text('Ver todas as pendências'),
-          ),
-        ),
-        const PopupMenuItem<String>(
-          value: 'read',
-          child: ListTile(
-            dense: true,
-            leading: Icon(FluentSystemIcons.check),
-            title: Text('Marcar como lidas'),
-          ),
-        ),
-      ],
     );
   }
 
@@ -4262,6 +4691,8 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
               child: SideBar(
                 area: _currentArea(),
                 activeRoute: route,
+                subscriptionSubtitle: _subscriptionSubtitle(),
+                subscriptionPackage: _subscriptionPackage(),
                 onTap: (area) {
                   Navigator.of(context).pop();
                   _selectArea(area);
@@ -4281,6 +4712,8 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                 SideBar(
                   area: _currentArea(),
                   activeRoute: route,
+                  subscriptionSubtitle: _subscriptionSubtitle(),
+                  subscriptionPackage: _subscriptionPackage(),
                   onTap: _selectArea,
                   onSubmenu: _selectSubmodule,
                 ),
@@ -4327,124 +4760,169 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                           tooltip: 'Pendências',
                           icon: FluentSystemIcons.pending,
                           badge: pending.length,
+                          urgent: pending.any(_isUrgentPending),
                           onPressed: () => select('pending'),
                         ),
                         _notificationMenu(),
                         _navbarAction(
-                          tooltip: 'Cobranças e tesouraria',
+                          tooltip: 'Cobrança',
                           icon: FluentSystemIcons.payments,
                           badge: metrics['overdue_cents'] == null ? 0 : 0,
-                          onPressed: () => select('payments'),
+                          onPressed: () => select('collections'),
                         ),
                         PopupMenuButton<ThemeMode>(
                           tooltip: 'Tema',
-                          icon: Icon(
-                            Theme.of(context).brightness == Brightness.dark
-                                ? FluentSystemIcons.brightness
-                                : FluentSystemIcons.light,
+                          icon: Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.surfaceContainerHighest,
+                              borderRadius: BorderRadius.circular(
+                                FluentTokens.radius8,
+                              ),
+                              border: Border.all(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.outlineVariant,
+                              ),
+                            ),
+                            child: Icon(
+                              Theme.of(context).brightness == Brightness.dark
+                                  ? FluentSystemIcons.brightness
+                                  : FluentSystemIcons.light,
+                              size: FluentTokens.iconMedium,
+                            ),
                           ),
-                          offset: const Offset(0, 12),
-                          constraints: const BoxConstraints(minWidth: 250),
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.surfaceContainerHigh,
-                          elevation: 8,
+                          offset: const Offset(0, FluentTokens.space8),
+                          constraints: const BoxConstraints(
+                            minWidth: 310,
+                            maxWidth: 330,
+                          ),
+                          color: Theme.of(context).colorScheme.surface,
+                          elevation: 0,
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
+                            borderRadius: BorderRadius.circular(
+                              FluentTokens.radius12,
+                            ),
+                            side: BorderSide(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.outlineVariant,
+                            ),
                           ),
                           onSelected: (selected) =>
                               widget.onTheme?.call(selected),
                           itemBuilder: (_) {
                             final current = themeMode.value;
+                            final scheme = Theme.of(context).colorScheme;
                             return [
                               PopupMenuItem<ThemeMode>(
                                 enabled: false,
-                                height: 76,
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Text(
-                                      'Aparência',
-                                      style: TextStyle(
-                                        color: Theme.of(
-                                          context,
-                                        ).colorScheme.onSurface,
-                                        fontWeight: FontWeight.w700,
-                                        fontSize: 16,
+                                height: 104,
+                                child: Container(
+                                  padding: const EdgeInsets.all(
+                                    FluentTokens.space16,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      colors: [
+                                        scheme.primary.withValues(alpha: .12),
+                                        scheme.tertiary.withValues(alpha: .05),
+                                      ],
+                                    ),
+                                    borderRadius: BorderRadius.circular(
+                                      FluentTokens.radius8,
+                                    ),
+                                    border: Border.all(
+                                      color: scheme.primary.withValues(
+                                        alpha: .18,
                                       ),
                                     ),
-                                    const SizedBox(height: 3),
-                                    Text(
-                                      'Escolha como o $_institutionName é apresentado',
-                                      style: TextStyle(
-                                        color: Theme.of(
-                                          context,
-                                        ).colorScheme.onSurfaceVariant,
-                                        fontSize: 12,
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Container(
+                                        width: 42,
+                                        height: 42,
+                                        decoration: BoxDecoration(
+                                          color: scheme.primary,
+                                          borderRadius: BorderRadius.circular(
+                                            FluentTokens.radius8,
+                                          ),
+                                        ),
+                                        child: Icon(
+                                          FluentSystemIcons.brightness,
+                                          color: scheme.onPrimary,
+                                          size: FluentTokens.iconMedium,
+                                        ),
                                       ),
-                                    ),
-                                  ],
+                                      const SizedBox(
+                                        width: FluentTokens.space12,
+                                      ),
+                                      Expanded(
+                                        child: Column(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              'Aparência',
+                                              style: TextStyle(
+                                                color: scheme.onSurface,
+                                                fontWeight: FontWeight.w800,
+                                                fontSize: 17,
+                                              ),
+                                            ),
+                                            const SizedBox(
+                                              height: FluentTokens.space4,
+                                            ),
+                                            Text(
+                                              'Escolha o tema do $_institutionName',
+                                              maxLines: 2,
+                                              style: TextStyle(
+                                                color: scheme.onSurfaceVariant,
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
+                              const PopupMenuDivider(),
                               for (final option in [
                                 (
                                   ThemeMode.system,
                                   'Automático',
-                                  FluentSystemIcons.brightness,
+                                  'Segue a definição do dispositivo',
+                                  FluentSystemIcons.systemTheme,
                                 ),
                                 (
                                   ThemeMode.light,
                                   'Claro',
+                                  'Superfícies claras e alto contraste',
                                   FluentSystemIcons.light,
                                 ),
                                 (
                                   ThemeMode.dark,
                                   'Escuro',
-                                  FluentSystemIcons.brightness,
+                                  'Confortável em ambientes com pouca luz',
+                                  FluentSystemIcons.darkTheme,
                                 ),
                               ])
                                 PopupMenuItem<ThemeMode>(
                                   value: option.$1,
-                                  height: 58,
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                      vertical: 7,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: current == option.$1
-                                          ? Theme.of(context)
-                                                .colorScheme
-                                                .primary
-                                                .withValues(alpha: .10)
-                                          : Colors.transparent,
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        Icon(option.$3, size: 19),
-                                        const SizedBox(width: 12),
-                                        Expanded(
-                                          child: Text(
-                                            option.$2,
-                                            style: TextStyle(
-                                              fontWeight: current == option.$1
-                                                  ? FontWeight.w700
-                                                  : FontWeight.w500,
-                                            ),
-                                          ),
-                                        ),
-                                        if (current == option.$1)
-                                          Icon(
-                                            FluentSystemIcons.check,
-                                            size: 18,
-                                            color: Theme.of(
-                                              context,
-                                            ).colorScheme.primary,
-                                          ),
-                                      ],
-                                    ),
+                                  height: 72,
+                                  child: _ThemeMenuOption(
+                                    icon: option.$4,
+                                    title: option.$2,
+                                    subtitle: option.$3,
+                                    selected: current == option.$1,
                                   ),
                                 ),
                             ];
@@ -4453,23 +4931,52 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                         const SizedBox(width: 12),
                         PopupMenuButton<String>(
                           tooltip: 'Conta',
-                          icon: const Icon(FluentSystemIcons.account),
-                          offset: const Offset(0, 12),
-                          constraints: const BoxConstraints(minWidth: 285),
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.surfaceContainerHigh,
-                          elevation: 8,
+                          icon: Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.surfaceContainerHighest,
+                              borderRadius: BorderRadius.circular(
+                                FluentTokens.radius8,
+                              ),
+                              border: Border.all(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.outlineVariant,
+                              ),
+                            ),
+                            child: const Icon(
+                              FluentSystemIcons.account,
+                              size: FluentTokens.iconMedium,
+                            ),
+                          ),
+                          offset: const Offset(0, FluentTokens.space8),
+                          constraints: const BoxConstraints(
+                            minWidth: 320,
+                            maxWidth: 340,
+                          ),
+                          color: Theme.of(context).colorScheme.surface,
+                          elevation: 0,
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
+                            borderRadius: BorderRadius.circular(
+                              FluentTokens.radius12,
+                            ),
+                            side: BorderSide(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.outlineVariant,
+                            ),
                           ),
                           onSelected: (value) async {
                             if (value == 'logout')
                               await widget.session.logout();
                             if (value == 'organization')
                               await selectOrganization();
-                            if (value == 'settings' && context.mounted)
-                              select('settings');
+                            if (value == 'settings' && context.mounted) {
+                              select('general-settings');
+                            }
                             if (value == 'profile' && context.mounted) {
                               await _showProfileDialog();
                             }
@@ -4481,47 +4988,73 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                             final role =
                                 _roles[profile['role']] ??
                                 '${profile['role'] ?? 'Operador'}';
-                            final organization =
-                                '${profile['organization_name'] ?? profile['organization'] ?? profile['organization_id'] ?? profile['organizationId'] ?? 'Organização actual'}';
+                            final organization = _profileOrganizationName;
                             final email =
                                 '${profile['email'] ?? 'Acesso autenticado'}';
                             return [
                               PopupMenuItem<String>(
                                 enabled: false,
-                                height: 126,
+                                height: 132,
                                 child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 10,
+                                  padding: const EdgeInsets.all(
+                                    FluentTokens.space16,
                                   ),
                                   decoration: BoxDecoration(
-                                    color: scheme.primary.withValues(
-                                      alpha: .08,
+                                    gradient: LinearGradient(
+                                      colors: [
+                                        scheme.primary.withValues(alpha: .12),
+                                        scheme.secondary.withValues(alpha: .06),
+                                      ],
                                     ),
-                                    borderRadius: BorderRadius.circular(10),
+                                    borderRadius: BorderRadius.circular(
+                                      FluentTokens.radius8,
+                                    ),
+                                    border: Border.all(
+                                      color: scheme.primary.withValues(
+                                        alpha: .18,
+                                      ),
+                                    ),
                                   ),
                                   child: Row(
                                     crossAxisAlignment:
-                                        CrossAxisAlignment.start,
+                                        CrossAxisAlignment.center,
                                     children: [
-                                      CircleAvatar(
-                                        radius: 23,
-                                        backgroundColor: scheme.primary,
+                                      Container(
+                                        width: 52,
+                                        height: 52,
+                                        decoration: BoxDecoration(
+                                          color: scheme.primary,
+                                          borderRadius: BorderRadius.circular(
+                                            FluentTokens.radius12,
+                                          ),
+                                          boxShadow: FluentTokens.elevation(
+                                            context,
+                                          ),
+                                        ),
+                                        alignment: Alignment.center,
                                         child: Text(
-                                          name
-                                              .trim()
-                                              .split(RegExp(r'\s+'))
-                                              .take(2)
-                                              .map((part) => part[0])
-                                              .join()
-                                              .toUpperCase(),
+                                          name.trim().isEmpty
+                                              ? 'U'
+                                              : name
+                                                    .trim()
+                                                    .split(RegExp(r'\s+'))
+                                                    .where(
+                                                      (part) => part.isNotEmpty,
+                                                    )
+                                                    .take(2)
+                                                    .map((part) => part[0])
+                                                    .join()
+                                                    .toUpperCase(),
                                           style: TextStyle(
                                             color: scheme.onPrimary,
+                                            fontSize: 17,
                                             fontWeight: FontWeight.w800,
                                           ),
                                         ),
                                       ),
-                                      const SizedBox(width: 12),
+                                      const SizedBox(
+                                        width: FluentTokens.space12,
+                                      ),
                                       Expanded(
                                         child: Column(
                                           crossAxisAlignment:
@@ -4535,7 +5068,9 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                                                 fontWeight: FontWeight.w800,
                                               ),
                                             ),
-                                            const SizedBox(height: 2),
+                                            const SizedBox(
+                                              height: FluentTokens.space2,
+                                            ),
                                             Text(
                                               email,
                                               maxLines: 1,
@@ -4545,24 +5080,33 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                                                 fontSize: 12,
                                               ),
                                             ),
-                                            const SizedBox(height: 8),
-                                            Row(
-                                              children: [
-                                                Icon(
-                                                  FluentSystemIcons.check,
-                                                  size: 14,
-                                                  color: scheme.primary,
-                                                ),
-                                                const SizedBox(width: 5),
-                                                Text(
-                                                  'Sessão activa · $role',
-                                                  style: TextStyle(
-                                                    color: scheme.primary,
-                                                    fontSize: 11,
-                                                    fontWeight: FontWeight.w700,
+                                            const SizedBox(
+                                              height: FluentTokens.space8,
+                                            ),
+                                            Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal:
+                                                        FluentTokens.space8,
+                                                    vertical:
+                                                        FluentTokens.space4,
                                                   ),
+                                              decoration: BoxDecoration(
+                                                color: scheme.primary
+                                                    .withValues(alpha: .10),
+                                                borderRadius:
+                                                    BorderRadius.circular(
+                                                      FluentTokens.radius6,
+                                                    ),
+                                              ),
+                                              child: Text(
+                                                role,
+                                                style: TextStyle(
+                                                  color: scheme.primary,
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.w800,
                                                 ),
-                                              ],
+                                              ),
                                             ),
                                           ],
                                         ),
@@ -4573,83 +5117,45 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                               ),
                               PopupMenuItem<String>(
                                 enabled: false,
-                                height: 48,
-                                child: Row(
-                                  children: [
-                                    Icon(
-                                      FluentSystemIcons.business,
-                                      size: 18,
-                                      color: scheme.onSurfaceVariant,
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            'Organização',
-                                            style: TextStyle(
-                                              color: scheme.onSurfaceVariant,
-                                              fontSize: 11,
-                                            ),
-                                          ),
-                                          Text(
-                                            organization,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: const TextStyle(
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
+                                height: 58,
+                                child: _ProfileMenuOrganization(
+                                  organization: organization,
                                 ),
                               ),
                               const PopupMenuDivider(),
-                              const PopupMenuItem(
+                              PopupMenuItem(
                                 value: 'profile',
-                                child: ListTile(
-                                  dense: true,
-                                  leading: Icon(FluentSystemIcons.account),
-                                  title: Text('Ver perfil'),
-                                ),
-                              ),
-                              const PopupMenuItem(
-                                value: 'organization',
-                                child: ListTile(
-                                  dense: true,
-                                  leading: Icon(FluentSystemIcons.business),
-                                  title: Text('Mudar organização'),
-                                ),
-                              ),
-                              const PopupMenuItem(
-                                value: 'settings',
-                                child: ListTile(
-                                  dense: true,
-                                  leading: Icon(FluentSystemIcons.settings),
-                                  title: Text('Definições da conta'),
+                                child: _ProfileMenuAction(
+                                  icon: FluentSystemIcons.account,
+                                  title: 'Ver perfil',
+                                  subtitle: 'Dados pessoais e segurança',
                                 ),
                               ),
                               PopupMenuItem(
+                                value: 'organization',
+                                child: _ProfileMenuAction(
+                                  icon: FluentSystemIcons.business,
+                                  title: 'Mudar organização',
+                                  subtitle: 'Trocar o espaço de trabalho',
+                                ),
+                              ),
+                              PopupMenuItem(
+                                value: 'settings',
+                                child: _ProfileMenuAction(
+                                  icon: FluentSystemIcons.settings,
+                                  title: 'Definições gerais',
+                                  subtitle:
+                                      'Segurança, aparência e preferências',
+                                ),
+                              ),
+                              const PopupMenuDivider(),
+                              PopupMenuItem(
                                 value: 'logout',
-                                child: ListTile(
-                                  dense: true,
-                                  leading: Icon(
-                                    FluentSystemIcons.close,
-                                    color: Theme.of(context).colorScheme.error,
-                                  ),
-                                  title: Text(
-                                    'Terminar sessão',
-                                    style: TextStyle(
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.error,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
+                                child: _ProfileMenuAction(
+                                  icon: FluentSystemIcons.close,
+                                  title: 'Terminar sessão',
+                                  subtitle: 'Sair deste dispositivo',
+                                  destructive: true,
                                 ),
                               ),
                             ];
@@ -4657,50 +5163,63 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                         ),
                       ],
                     ),
-                    if (refreshing || busy) const LinearProgressIndicator(),
+                    if ((refreshing || busy) && route != 'plans')
+                      const LinearProgressIndicator(),
                     Expanded(
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.all(20),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            if (![
-                              'dashboard',
-                              'simulator',
-                              'reports',
-                              'pending',
-                              'audit',
-                              'settings',
-                              'organization-settings',
-                              'risk-scores',
-                              'plans',
-                            ].contains(route))
-                              Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 16,
-                                ),
-                                child: TextField(
-                                  controller: search,
-                                  decoration: InputDecoration(
-                                    labelText: 'Pesquisar',
-                                    suffixIcon: IconButton(
-                                      onPressed: () {
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          const BrandWatermarkOverlay(),
+                          SingleChildScrollView(
+                            padding: const EdgeInsets.all(20),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if (!route.startsWith('admin-') &&
+                                    !route.startsWith('report-') &&
+                                    !_financeAreas.containsKey(route) &&
+                                    ![
+                                      'dashboard',
+                                      'simulator',
+                                      'reports',
+                                      'pending',
+                                      'audit',
+                                      'settings',
+                                      'general-settings',
+                                      'organization-settings',
+                                      'risk-scores',
+                                      'plans',
+                                      'collections',
+                                      'products',
+                                    ].contains(route))
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 16,
+                                    ),
+                                    child: TextField(
+                                      controller: search,
+                                      decoration: InputDecoration(
+                                        labelText: 'Pesquisar',
+                                        suffixIcon: IconButton(
+                                          onPressed: () {
+                                            offset = 0;
+                                            load();
+                                          },
+                                          icon: const Icon(Icons.search),
+                                        ),
+                                      ),
+                                      onSubmitted: (_) {
                                         offset = 0;
                                         load();
                                       },
-                                      icon: const Icon(Icons.search),
                                     ),
                                   ),
-                                  onSubmitted: (_) {
-                                    offset = 0;
-                                    load();
-                                  },
-                                ),
-                              ),
-                            const SizedBox(height: 20),
-                            _body(),
-                          ],
-                        ),
+                                const SizedBox(height: 20),
+                                _body(),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
@@ -4708,7 +5227,763 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
               ),
             ],
           ),
-          const BrandWatermarkOverlay(),
+        ],
+      ),
+    );
+  }
+}
+
+class _ExpiredTrialIdentifier extends StatelessWidget {
+  const _ExpiredTrialIdentifier({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.onCopy,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final VoidCallback onCopy;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+      decoration: BoxDecoration(
+        color: scheme.surface.withValues(alpha: .68),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: .8)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: scheme.primary.withValues(alpha: .1),
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Icon(icon, size: 18, color: scheme.primary),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: scheme.onSurfaceVariant,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                SelectableText(
+                  value.isEmpty ? 'Não disponível' : value,
+                  style: TextStyle(
+                    color: value.isEmpty ? scheme.error : scheme.primary,
+                    fontFamily: 'monospace',
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: .35,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Copiar $label',
+            onPressed: value.isEmpty ? null : onCopy,
+            icon: const Icon(Icons.document),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NotificationCenterPopup extends StatefulWidget {
+  const _NotificationCenterPopup({
+    required this.load,
+    required this.markRead,
+    required this.markAllRead,
+    required this.archive,
+    required this.restore,
+    required this.timeLabel,
+    required this.iconFor,
+    required this.onPending,
+  });
+
+  final Future<List<Json>> Function() load;
+  final Future<void> Function(Json notification) markRead;
+  final Future<void> Function() markAllRead;
+  final Future<void> Function(Json notification) archive;
+  final Future<void> Function(Json notification) restore;
+  final String Function(Object? value) timeLabel;
+  final IconData Function(String category) iconFor;
+  final VoidCallback onPending;
+
+  @override
+  State<_NotificationCenterPopup> createState() =>
+      _NotificationCenterPopupState();
+}
+
+class _NotificationCenterPopupState extends State<_NotificationCenterPopup> {
+  late Future<List<Json>> future;
+  String filter = 'all';
+  bool working = false;
+  bool refreshing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    future = widget.load();
+  }
+
+  Future<void> refresh() async {
+    if (refreshing) return;
+    setState(() {
+      refreshing = true;
+      future = widget.load();
+    });
+    try {
+      await future;
+    } finally {
+      if (mounted) setState(() => refreshing = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: 390,
+      constraints: const BoxConstraints(maxHeight: 440),
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: BorderRadius.circular(FluentTokens.radius12),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(FluentTokens.radius12),
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 10, 8, 8),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Notificações',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Actualizar',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: working || refreshing ? null : refresh,
+                    icon: refreshing
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(FluentSystemIcons.refresh, size: 17),
+                  ),
+                  IconButton(
+                    tooltip: 'Fechar',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(FluentSystemIcons.close, size: 17),
+                  ),
+                ],
+              ),
+            ),
+            FutureBuilder<List<Json>>(
+              future: future,
+              builder: (context, snapshot) {
+                final rows = snapshot.data ?? const <Json>[];
+                final unread = rows
+                    .where(
+                      (row) =>
+                          row['read_at'] == null && row['archived_at'] == null,
+                    )
+                    .length;
+                final archived = rows
+                    .where((row) => row['archived_at'] != null)
+                    .length;
+                return Container(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                  decoration: BoxDecoration(
+                    border: Border(
+                      bottom: BorderSide(color: scheme.outlineVariant),
+                    ),
+                  ),
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _notificationSelector(
+                              value: 'all',
+                              title: 'Todas',
+                              subtitle: '${rows.length - archived}',
+                              icon: FluentSystemIcons.notifications,
+                            ),
+                          ),
+                          const SizedBox(width: FluentTokens.space8),
+                          Expanded(
+                            child: _notificationSelector(
+                              value: 'unread',
+                              title: 'Novas',
+                              subtitle: '$unread',
+                              icon: FluentSystemIcons.pending,
+                            ),
+                          ),
+                          const SizedBox(width: FluentTokens.space8),
+                          Expanded(
+                            child: _notificationSelector(
+                              value: 'archived',
+                              title: 'Arquivo',
+                              subtitle: '$archived',
+                              icon: FluentSystemIcons.history,
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (unread > 0) ...[
+                        const SizedBox(height: 6),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: IconButton(
+                            tooltip: 'Marcar todas como lidas',
+                            visualDensity: VisualDensity.compact,
+                            onPressed: working
+                                ? null
+                                : () async {
+                                    setState(() => working = true);
+                                    try {
+                                      await widget.markAllRead();
+                                      await refresh();
+                                    } finally {
+                                      if (mounted) {
+                                        setState(() => working = false);
+                                      }
+                                    }
+                                  },
+                            icon: const Icon(FluentSystemIcons.check, size: 17),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                );
+              },
+            ),
+            Expanded(
+              child: FutureBuilder<List<Json>>(
+                future: future,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(
+                      child: SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    );
+                  }
+                  if (snapshot.hasError) {
+                    return _empty(
+                      FluentSystemIcons.error,
+                      'Não foi possível carregar',
+                      action: IconButton(
+                        tooltip: 'Tentar novamente',
+                        onPressed: refresh,
+                        icon: const Icon(FluentSystemIcons.refresh),
+                      ),
+                    );
+                  }
+                  final all = snapshot.data ?? const <Json>[];
+                  final rows = switch (filter) {
+                    'unread' =>
+                      all
+                          .where(
+                            (row) =>
+                                row['read_at'] == null &&
+                                row['archived_at'] == null,
+                          )
+                          .toList(),
+                    'archived' =>
+                      all.where((row) => row['archived_at'] != null).toList(),
+                    _ =>
+                      all.where((row) => row['archived_at'] == null).toList(),
+                  };
+                  if (rows.isEmpty) {
+                    return _empty(
+                      FluentSystemIcons.notifications,
+                      filter == 'unread'
+                          ? 'Sem notificações novas'
+                          : filter == 'archived'
+                          ? 'Arquivo vazio'
+                          : 'Sem notificações',
+                    );
+                  }
+                  return ListView.separated(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    itemCount: rows.length,
+                    separatorBuilder: (_, _) => Divider(
+                      height: 1,
+                      indent: 52,
+                      color: scheme.outlineVariant,
+                    ),
+                    itemBuilder: (context, index) => _tile(rows[index]),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _notificationSelector({
+    required String value,
+    required String title,
+    required String subtitle,
+    required IconData icon,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    final selected = filter == value;
+    return Material(
+      color: selected
+          ? scheme.primary.withValues(alpha: .07)
+          : scheme.surfaceContainerLow,
+      borderRadius: BorderRadius.circular(FluentTokens.radius8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(FluentTokens.radius8),
+        onTap: () => setState(() => filter = value),
+        child: AnimatedContainer(
+          duration: FluentTokens.fast,
+          height: 40,
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(FluentTokens.radius8),
+            border: Border.all(
+              color: selected ? scheme.primary : scheme.outlineVariant,
+              width: selected ? 1.5 : 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                icon,
+                size: 17,
+                color: selected ? scheme.primary : scheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        title,
+                        maxLines: 1,
+                        softWrap: false,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: selected ? scheme.primary : scheme.onSurface,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      softWrap: false,
+                      style: TextStyle(
+                        color: selected
+                            ? scheme.primary
+                            : scheme.onSurfaceVariant,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (selected)
+                Icon(FluentSystemIcons.check, size: 14, color: scheme.primary),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _tile(Json notification) {
+    final scheme = Theme.of(context).colorScheme;
+    final unread = notification['read_at'] == null;
+    final archived = notification['archived_at'] != null;
+    final category = '${notification['category'] ?? ''}';
+    return Material(
+      color: unread
+          ? scheme.primary.withValues(alpha: .055)
+          : Colors.transparent,
+      child: InkWell(
+        onTap: working || !unread
+            ? null
+            : () async {
+                setState(() => working = true);
+                try {
+                  await widget.markRead(notification);
+                  setState(() {});
+                } finally {
+                  if (mounted) setState(() => working = false);
+                }
+              },
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(
+                  color: scheme.primary.withValues(alpha: .10),
+                  borderRadius: BorderRadius.circular(FluentTokens.radius6),
+                ),
+                child: Icon(
+                  widget.iconFor(category),
+                  color: scheme.primary,
+                  size: 15,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '${notification['title'] ?? 'Notificação'}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: unread
+                                  ? FontWeight.w800
+                                  : FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        if (unread)
+                          Container(
+                            width: 6,
+                            height: 6,
+                            margin: const EdgeInsets.only(left: 6),
+                            decoration: BoxDecoration(
+                              color: scheme.primary,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${notification['body'] ?? ''}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: scheme.onSurfaceVariant,
+                        fontSize: 11,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      widget.timeLabel(notification['created_at']),
+                      style: TextStyle(
+                        color: scheme.onSurfaceVariant,
+                        fontSize: 10,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                tooltip: archived
+                    ? 'Restaurar notificação'
+                    : 'Arquivar notificação',
+                visualDensity: VisualDensity.compact,
+                onPressed: working
+                    ? null
+                    : () async {
+                        setState(() => working = true);
+                        try {
+                          if (archived) {
+                            await widget.restore(notification);
+                          } else {
+                            await widget.archive(notification);
+                          }
+                          await refresh();
+                        } finally {
+                          if (mounted) setState(() => working = false);
+                        }
+                      },
+                icon: Icon(
+                  archived
+                      ? FluentSystemIcons.restoreArchive
+                      : FluentSystemIcons.archive,
+                  size: 15,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _empty(IconData icon, String text, {Widget? action}) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 28, color: Theme.of(context).colorScheme.primary),
+          const SizedBox(height: 8),
+          Text(text, style: const TextStyle(fontWeight: FontWeight.w700)),
+          if (action != null) action,
+        ],
+      ),
+    ),
+  );
+}
+
+class _ProfileMenuOrganization extends StatelessWidget {
+  const _ProfileMenuOrganization({required this.organization});
+
+  final String organization;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Row(
+      children: [
+        Container(
+          width: 34,
+          height: 34,
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(FluentTokens.radius8),
+          ),
+          child: Icon(
+            FluentSystemIcons.business,
+            size: FluentTokens.iconSmall,
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(width: FluentTokens.space12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                'ORGANIZAÇÃO',
+                style: TextStyle(
+                  color: scheme.onSurfaceVariant,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: .5,
+                ),
+              ),
+              const SizedBox(height: FluentTokens.space2),
+              Text(
+                organization,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ProfileMenuAction extends StatelessWidget {
+  const _ProfileMenuAction({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    this.destructive = false,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final bool destructive;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final color = destructive ? scheme.error : scheme.onSurface;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: FluentTokens.space4),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: destructive
+                  ? scheme.error.withValues(alpha: .10)
+                  : scheme.primary.withValues(alpha: .08),
+              borderRadius: BorderRadius.circular(FluentTokens.radius8),
+            ),
+            child: Icon(icon, size: FluentTokens.iconSmall, color: color),
+          ),
+          const SizedBox(width: FluentTokens.space12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(color: color, fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: FluentTokens.space2),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    color: destructive
+                        ? scheme.error.withValues(alpha: .78)
+                        : scheme.onSurfaceVariant,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Icon(
+            FluentSystemIcons.chevronRight,
+            size: 14,
+            color: destructive ? scheme.error : scheme.onSurfaceVariant,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ThemeMenuOption extends StatelessWidget {
+  const _ThemeMenuOption({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.selected,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: FluentTokens.space8,
+        vertical: FluentTokens.space8,
+      ),
+      decoration: BoxDecoration(
+        color: selected
+            ? scheme.primary.withValues(alpha: .10)
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(FluentTokens.radius8),
+        border: selected
+            ? Border.all(color: scheme.primary.withValues(alpha: .24))
+            : null,
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: selected
+                  ? scheme.primary.withValues(alpha: .14)
+                  : scheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(FluentTokens.radius8),
+            ),
+            child: Icon(
+              icon,
+              size: FluentTokens.iconSmall,
+              color: selected ? scheme.primary : scheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(width: FluentTokens.space12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
+                    color: selected ? scheme.primary : scheme.onSurface,
+                  ),
+                ),
+                const SizedBox(height: FluentTokens.space2),
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: scheme.onSurfaceVariant,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: FluentTokens.space8),
+          AnimatedContainer(
+            duration: FluentTokens.fast,
+            width: 20,
+            height: 20,
+            decoration: BoxDecoration(
+              color: selected ? scheme.primary : Colors.transparent,
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: selected ? scheme.primary : scheme.outline,
+              ),
+            ),
+            child: selected
+                ? Icon(
+                    FluentSystemIcons.check,
+                    size: 12,
+                    color: scheme.onPrimary,
+                  )
+                : null,
+          ),
         ],
       ),
     );

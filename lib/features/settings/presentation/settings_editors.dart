@@ -175,7 +175,7 @@ extension _SettingsEditors on InstitutionSettingsViewState {
             'branch': (data['branches'] as List).first['code'],
             'status': 'Activo',
             'lastAccess': 'Nunca',
-            'history': 'Convite inicial simulado.',
+            'history': 'Convite inicial criado.',
           }
         : Map<String, dynamic>.from(users[index] as Map);
     final values = <String, String>{
@@ -204,7 +204,7 @@ extension _SettingsEditors on InstitutionSettingsViewState {
             index == null ? 'Novo utilizador' : 'Alterar dados do utilizador',
           ),
           icon: FluentIcons.contact,
-          subtitle: 'Identidade, agência e acesso · ambiente de demonstração',
+          subtitle: 'Identidade, agência e acesso',
           width: 820,
           content: Form(
             key: form,
@@ -244,7 +244,7 @@ extension _SettingsEditors on InstitutionSettingsViewState {
                             Text('${user['role']} · ${user['branch']}'),
                             TextButton(
                               onPressed: () async {
-                                final asset = await _readImage();
+                                final asset = await _readImage('userPhoto');
                                 if (asset != null && context.mounted) {
                                   update(() => photo = asset);
                                 }
@@ -329,7 +329,7 @@ extension _SettingsEditors on InstitutionSettingsViewState {
                 ),
                 const SizedBox(height: 6),
                 const Text(
-                  'Palavra-passe opcional, apenas para validar o formulário de demonstração. Não é guardada nem enviada.',
+                  'A palavra-passe não é armazenada nesta configuração.',
                 ),
                 const SizedBox(height: 16),
                 TextFormField(
@@ -440,14 +440,14 @@ extension _SettingsEditors on InstitutionSettingsViewState {
     final user = users[index] as Map;
     if (action == 'Recuperar acesso') {
       if (await _confirm(
-        'Simular recuperação de acesso?',
-        'Será registada uma simulação para ${user['email']}. Não será enviado um e-mail nem alterada a palavra-passe.',
-        action: 'Simular recuperação',
+        'Recuperar acesso?',
+        'Será registada uma solicitação de recuperação para ${user['email']}.',
+        action: 'Registar solicitação',
       )) {
         user['history'] =
-            '${user['history']}\n${DateTime.now().toIso8601String()} · Recuperação de acesso simulada por ${model.actor}.';
+            '${user['history']}\n${DateTime.now().toIso8601String()} · Recuperação de acesso solicitada por ${model.actor}.';
         model.refresh();
-        _toast('Recuperação simulada adicionada ao rascunho.');
+        _toast('Solicitação de recuperação registada.');
       }
       return;
     }
@@ -462,7 +462,7 @@ extension _SettingsEditors on InstitutionSettingsViewState {
     }
     if (await _confirm(
       '$action utilizador?',
-      '${user['name']} ficará com estado $next na demonstração.',
+      '${user['name']} ficará com estado $next.',
       action: action,
     )) {
       user['status'] = next;
@@ -575,7 +575,7 @@ extension _SettingsEditors on InstitutionSettingsViewState {
     model.refresh();
   }
 
-  Future<Map<String, dynamic>?> _readImage() async {
+  Future<Map<String, dynamic>?> _readImage(String key) async {
     try {
       final file = await openFile(
         acceptedTypeGroups: const [
@@ -592,9 +592,15 @@ extension _SettingsEditors on InstitutionSettingsViewState {
         return null;
       }
       final bytes = await file.readAsBytes();
+      final targetWidth = switch (key) {
+        'signature' => 480,
+        'stamp' => 360,
+        'favicon' => 192,
+        _ => 800,
+      };
       final codec = await ui.instantiateImageCodec(
         bytes,
-        targetWidth: 1200,
+        targetWidth: targetWidth,
         allowUpscaling: false,
       );
       final frame = await codec.getNextFrame();
@@ -604,10 +610,15 @@ extension _SettingsEditors on InstitutionSettingsViewState {
       frame.image.dispose();
       codec.dispose();
       if (normalized == null) throw const FormatException('Imagem inválida');
-      return {
-        'name': file.name,
-        'data': base64Encode(normalized.buffer.asUint8List()),
-      };
+      final rawPng = normalized.buffer.asUint8List();
+      final decoded = img.decodePng(rawPng);
+      if (decoded == null) throw const FormatException('Imagem inválida');
+      final normalizedBytes = img.encodePng(decoded, level: 9);
+      if (normalizedBytes.length > 2 * 1024 * 1024) {
+        _toast('A imagem deve ter no máximo 2 MB após optimização.');
+        return null;
+      }
+      return {'name': file.name, 'data': base64Encode(normalizedBytes)};
     } catch (_) {
       _toast(
         'Não foi possível ler a imagem. Escolha um ficheiro PNG ou JPG válido.',
@@ -618,7 +629,7 @@ extension _SettingsEditors on InstitutionSettingsViewState {
 
   Future<void> _pickAsset(String key) async {
     _rebuild(() => _uploading = true);
-    final image = await _readImage();
+    final image = await _readImage(key);
     if (!mounted) return;
     if (image != null) {
       (data['assets'] as Map)[key] = image;
@@ -634,9 +645,9 @@ extension _SettingsEditors on InstitutionSettingsViewState {
         suggestedName: 'previsualizacao_${_document.toLowerCase()}.pdf',
       );
       if (file == null) return;
-      final bytes = await InstitutionDocument(
+      final bytes = await InstitutionDocument.create(
         settings: data,
-      ).preview(_document);
+      ).then((document) => document.preview(_document));
       await XFile.fromData(
         bytes,
         mimeType: 'application/pdf',

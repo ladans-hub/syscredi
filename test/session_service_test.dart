@@ -17,6 +17,8 @@ class _Auth implements AuthGateway {
   @override
   Stream<bool> get sessionChanges => changes.stream;
   @override
+  Stream<bool> get passwordRecoveryChanges => const Stream.empty();
+  @override
   Future<String?> accessToken() async => 'token';
   @override
   Future<void> refreshToken() async {}

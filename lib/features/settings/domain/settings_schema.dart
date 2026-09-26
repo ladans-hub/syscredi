@@ -254,12 +254,6 @@ const settingsCategories = [
             min: 100,
             max: 560,
           ),
-          SettingField(
-            'watermarkPosition',
-            'Posicionamento',
-            'Centro',
-            options: ['Centro', 'Inferior direito', 'Superior esquerdo'],
-          ),
         ],
       ),
     ],
@@ -278,7 +272,7 @@ const settingsCategories = [
     [
       SettingsSection(
         'Palavras-passe',
-        'As políticas abaixo são simuladas; não alteram a autenticação real.',
+        'Políticas aplicadas ao acesso e à autenticação da organização.',
         [
           SettingField(
             'passwordLength',
@@ -306,7 +300,7 @@ const settingsCategories = [
       ),
       SettingsSection(
         'Sessões e operações sensíveis',
-        'Modelo de política para posterior integração com o serviço de autenticação.',
+        'Regras para sessões e operações que exigem protecção adicional.',
         [
           SettingField(
             'sessionMinutes',
@@ -435,7 +429,7 @@ const settingsCategories = [
     [
       SettingsSection(
         'Valores e cálculo',
-        'Valores demonstrativos, sujeitos às políticas aprovadas da instituição.',
+        'Valores globais sujeitos às políticas aprovadas pela instituição.',
         [
           SettingField(
             'creditCurrency',
@@ -649,7 +643,7 @@ const settingsCategories = [
     [
       SettingsSection(
         'Composição dos identificadores',
-        'A sequência é uma configuração de demonstração; não emite números reais.',
+        'Regras usadas na composição dos identificadores institucionais.',
         [
           SettingField('includeYear', 'Incluir ano', true),
           SettingField('includeBranch', 'Incluir código da agência', true),
@@ -751,7 +745,7 @@ const settingsCategories = [
     [
       SettingsSection(
         'Canais e lembretes',
-        'Envios simulados; não são enviadas mensagens a clientes.',
+        'Canais e horários usados nas comunicações da instituição.',
         [
           SettingField('smsEnabled', 'Activar SMS', true),
           SettingField('emailEnabled', 'Activar e-mail', true),
@@ -767,7 +761,7 @@ const settingsCategories = [
             min: 1,
             max: 30,
           ),
-          SettingField('senderName', 'Nome do remetente', 'ACACIA'),
+          SettingField('senderName', 'Nome do remetente', 'Syscredi'),
           SettingField(
             'replyEmail',
             'E-mail de resposta',
@@ -786,7 +780,7 @@ const settingsCategories = [
     [
       SettingsSection(
         'Backup e retenção',
-        'Política de demonstração; as cópias desta área contêm apenas as configurações mockadas.',
+        'Políticas de backup, retenção e portabilidade das configurações.',
         [
           SettingField('backupEnabled', 'Backup automático', true),
           SettingField(
@@ -990,7 +984,7 @@ SettingsData defaultSettings() => {
       'status': 'Bloqueado',
       'lastAccess': '17/09/2026 11:08',
       'address': 'Alto Maé, Maputo',
-      'history': 'Bloqueio demonstrativo por tentativas de acesso.',
+      'history': 'Bloqueio por tentativas de acesso.',
     },
   ],
   'roles': ['Gestor', 'Operador', 'Avalista'],

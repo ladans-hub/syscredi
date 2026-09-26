@@ -1,4 +1,5 @@
 import '../../../core/widgets/premium_dialog.dart';
+import '../../../core/widgets/operation_feedback.dart';
 import 'package:flutter/material.dart' hide Icons;
 
 import '../../../app/theme/fluent_design.dart';
@@ -9,8 +10,15 @@ import '../domain/repository.dart';
 
 /// Monitoring uses only supplied observations; missing values are never zeroed.
 class RiskCenterView extends StatefulWidget {
-  const RiskCenterView({required this.rows, super.key});
+  const RiskCenterView({
+    required this.rows,
+    this.repository,
+    this.onRefresh,
+    super.key,
+  });
   final List<Json> rows;
+  final Repository? repository;
+  final Future<void> Function()? onRefresh;
 
   @override
   State<RiskCenterView> createState() => _RiskCenterViewState();
@@ -21,6 +29,7 @@ class _RiskCenterViewState extends State<RiskCenterView> {
   String _bucket = 'Todas';
   bool _priority = false;
   int _page = 0;
+  Json? _portfolioSummary;
   static const _buckets = [
     'Em dia',
     '1–30 dias',
@@ -34,6 +43,43 @@ class _RiskCenterViewState extends State<RiskCenterView> {
   void dispose() {
     _search.dispose();
     super.dispose();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPortfolioSummary();
+  }
+
+  Future<void> _loadPortfolioSummary() async {
+    final repository = widget.repository;
+    if (repository == null) return;
+    try {
+      final dashboard = Map<String, dynamic>.from(
+        await repository.get('/dashboard') as Map,
+      );
+      final currencies = dashboard['currencies'];
+      if (!mounted || currencies is! List) return;
+      var outstanding = 0;
+      var par30 = 0;
+      var par90 = 0;
+      for (final raw in currencies) {
+        if (raw is! Map) continue;
+        final row = Map<String, dynamic>.from(raw);
+        outstanding += int.tryParse('${row['outstandingCents'] ?? 0}') ?? 0;
+        par30 += int.tryParse('${row['par30Cents'] ?? 0}') ?? 0;
+        par90 += int.tryParse('${row['par90Cents'] ?? 0}') ?? 0;
+      }
+      setState(() {
+        _portfolioSummary = {
+          'outstanding_cents': outstanding,
+          'par30_cents': par30,
+          'par90_cents': par90,
+        };
+      });
+    } catch (_) {
+      // Risk scores remain usable if the portfolio summary is unavailable.
+    }
   }
 
   @override
@@ -87,52 +133,194 @@ class _RiskCenterViewState extends State<RiskCenterView> {
         : colors.primary;
   }
 
-  void _details(Json row) => showDialog<void>(
-    context: context,
-    builder: (context) => PremiumDialog(
-      title: const Text('Análise de risco'),
-      subtitle: 'Avaliação de risco · ${_value(row, 'client_name')}',
-      icon: Icons.policy_outlined,
-      content: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          DetailFields(
-            fields: [
-              ('Cliente', _value(row, 'client_name')),
-              ('Referência', _value(row, 'client_id')),
-              ('Contrato', _value(row, 'loan_id')),
-              ('Capital em aberto', _amount(row)),
-              ('Atraso', _band(row)),
-              ('Classificação interna', _value(row, 'band')),
-              ('Pontuação fornecida', _value(row, 'score')),
-              ('Responsável', _value(row, 'officer_name')),
-              ('Última avaliação', _value(row, 'assessed_at')),
-              (
-                'Reestruturado',
-                row['restructured'] == null
-                    ? 'Não informado'
-                    : row['restructured'] == true
-                    ? 'Sim'
-                    : 'Não',
-              ),
-              ('Próxima acção sugerida', _action(row)),
-            ],
-          ),
-          const SizedBox(height: 20),
-          const Text(
-            'A pontuação depende do modelo de origem. As faixas de atraso são operacionais e não substituem a avaliação de crédito ou a classificação regulamentar.',
-            style: TextStyle(fontSize: 12),
+  Future<void> _details(Json row) async {
+    Json? explanation;
+    final clientId = '${row['client_id'] ?? ''}';
+    if (widget.repository != null && clientId.isNotEmpty) {
+      try {
+        explanation = Map<String, dynamic>.from(
+          await widget.repository!.get('/risk-scores/$clientId/explain') as Map,
+        );
+      } catch (_) {}
+    }
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => PremiumDialog(
+        title: const Text('Análise de risco'),
+        subtitle: 'Avaliação de risco · ${_value(row, 'client_name')}',
+        icon: Icons.policy_outlined,
+        content: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            DetailFields(
+              fields: [
+                ('Cliente', _value(row, 'client_name')),
+                ('Referência', _value(row, 'client_id')),
+                ('Contrato', _value(row, 'loan_id')),
+                ('Capital em aberto', _amount(row)),
+                ('Atraso', _band(row)),
+                ('Classificação interna', _value(row, 'band')),
+                ('Pontuação fornecida', _value(row, 'score')),
+                ('Responsável', _value(row, 'officer_name')),
+                ('Última avaliação', _value(row, 'assessed_at')),
+                (
+                  'Reestruturado',
+                  row['restructured'] == null
+                      ? 'Não informado'
+                      : row['restructured'] == true
+                      ? 'Sim'
+                      : 'Não',
+                ),
+                ('Próxima acção sugerida', _action(row)),
+                if (explanation != null) ...[
+                  (
+                    'Decisão efectiva',
+                    '${explanation['effectiveDecision'] ?? '—'}',
+                  ),
+                  (
+                    'Empréstimos activos',
+                    '${(explanation['exposure'] as Map?)?['active_loans'] ?? '—'}',
+                  ),
+                  (
+                    'Exposição total',
+                    money(
+                      (explanation['exposure'] as Map?)?['exposure_cents'] ?? 0,
+                    ),
+                  ),
+                  (
+                    'Prestações vencidas',
+                    '${(explanation['overdue'] as Map?)?['overdue_installments'] ?? '—'}',
+                  ),
+                  (
+                    'Montante vencido',
+                    money(
+                      (explanation['overdue'] as Map?)?['overdue_cents'] ?? 0,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              'A pontuação depende do modelo de origem. As faixas de atraso são operacionais e não substituem a avaliação de crédito ou a classificação regulamentar.',
+              style: TextStyle(fontSize: 12),
+            ),
+          ],
+        ),
+        actions: [
+          if (widget.repository != null && clientId.isNotEmpty)
+            OutlinedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _override(row);
+              },
+              child: const Text('Decisão excepcional'),
+            ),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Fechar'),
           ),
         ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Fechar'),
+    );
+  }
+
+  Future<void> _override(Json row) async {
+    final repository = widget.repository;
+    if (repository == null) return;
+    var decision = 'approve';
+    final reason = TextEditingController();
+    final expiresAt = TextEditingController();
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('Decisão excepcional de risco'),
+          content: SizedBox(
+            width: 520,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  initialValue: decision,
+                  decoration: const InputDecoration(labelText: 'Decisão'),
+                  items: const [
+                    DropdownMenuItem(
+                      value: 'approve',
+                      child: Text('Aprovar excepcionalmente'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'reject',
+                      child: Text('Bloquear aprovação'),
+                    ),
+                  ],
+                  onChanged: (value) =>
+                      setDialogState(() => decision = value ?? decision),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: reason,
+                  maxLines: 3,
+                  decoration: const InputDecoration(
+                    labelText: 'Justificação obrigatória',
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: expiresAt,
+                  decoration: const InputDecoration(
+                    labelText: 'Validade opcional (AAAA-MM-DD)',
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Guardar decisão'),
+            ),
+          ],
         ),
-      ],
-    ),
-  );
+      ),
+    );
+    final reasonValue = reason.text.trim();
+    final expiryValue = expiresAt.text.trim();
+    reason.dispose();
+    expiresAt.dispose();
+    if (saved != true || reasonValue.length < 3 || !mounted) return;
+    try {
+      await repository.write('POST', '/risk-overrides', {
+        'clientId': '${row['client_id']}',
+        'decision': decision,
+        'reason': reasonValue,
+        if (expiryValue.isNotEmpty) 'expiresAt': '${expiryValue}T23:59:59Z',
+      });
+      await widget.onRefresh?.call();
+      if (mounted) {
+        await showFeedbackDialog(
+          context,
+          title: 'Decisão de risco guardada',
+          message: 'A decisão excepcional foi registada com auditoria.',
+          success: true,
+        );
+      }
+    } catch (failure) {
+      if (mounted) {
+        await showFeedbackDialog(
+          context,
+          title: 'Decisão não guardada',
+          message: '$failure',
+          success: false,
+        );
+      }
+    }
+  }
 
   Widget _surface(Widget child) =>
       FluentSurface(padding: const EdgeInsets.all(20), child: child);
@@ -159,6 +347,22 @@ class _RiskCenterViewState extends State<RiskCenterView> {
           .fold<int>(0, (sum, r) => sum + _number(r, 'balance_cents')!);
       return '${(100 * atRisk / total).toStringAsFixed(1).replaceAll('.', ',')}%';
     }
+
+    String portfolioPar(String key, int threshold) {
+      final summary = _portfolioSummary;
+      if (summary == null) return par(threshold);
+      final outstanding = _number(summary, 'outstanding_cents') ?? 0;
+      final atRisk = _number(summary, key) ?? 0;
+      if (outstanding == 0) return '0,0%';
+      return '${(100 * atRisk / outstanding).toStringAsFixed(1).replaceAll('.', ',')}%';
+    }
+
+    final portfolioOutstanding = _portfolioSummary == null
+        ? rows.isNotEmpty &&
+                  rows.every((r) => _number(r, 'balance_cents') != null)
+              ? money(total)
+              : '—'
+        : money(_portfolioSummary!['outstanding_cents']);
 
     final query = _search.text.trim().toLowerCase();
     final filtered =
@@ -242,22 +446,17 @@ class _RiskCenterViewState extends State<RiskCenterView> {
                 for (final item in [
                   (
                     'Capital em aberto',
-                    rows.isNotEmpty &&
-                            rows.every(
-                              (r) => _number(r, 'balance_cents') != null,
-                            )
-                        ? money(total)
-                        : '—',
+                    portfolioOutstanding,
                     'Soma dos saldos de capital',
                   ),
                   (
                     'PAR > 30 dias',
-                    par(30),
+                    portfolioPar('par30_cents', 30),
                     'Capital com atraso superior a 30 dias',
                   ),
                   (
                     'PAR > 90 dias',
-                    par(90),
+                    portfolioPar('par90_cents', 90),
                     'Capital com atraso superior a 90 dias',
                   ),
                   (

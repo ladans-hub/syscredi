@@ -33,7 +33,7 @@ class BrandVisuals {
     this.watermarkEnabled = true,
     this.watermarkOpacity = .045,
     this.watermarkSize = 560,
-    this.watermarkPosition = 'Inferior direito',
+    this.watermarkPosition = 'Centro',
     this.radius = 8,
     this.density = 'Confortável',
     this.accent = const Color(0xff0078d4),
@@ -128,6 +128,37 @@ class SyscrediProgressIndicator extends StatelessWidget {
       ),
     );
   }
+}
+
+class CenteredLoadingState extends StatelessWidget {
+  const CenteredLoadingState({
+    required this.message,
+    this.minimumHeight = 360,
+    super.key,
+  });
+
+  final String message;
+  final double minimumHeight;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) => SizedBox(
+      width: double.infinity,
+      height: constraints.hasBoundedHeight
+          ? constraints.maxHeight
+          : minimumHeight,
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SyscrediProgressIndicator(size: 42),
+            const SizedBox(height: 16),
+            Text(message, textAlign: TextAlign.center),
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 Color parseBrandColor(String raw, Color fallback) {
@@ -336,11 +367,7 @@ class BrandWatermarkOverlay extends StatelessWidget {
     return Positioned.fill(
       child: IgnorePointer(
         child: Align(
-          alignment: switch (visuals.watermarkPosition) {
-            'Centro' => Alignment.center,
-            'Superior esquerdo' => Alignment.topLeft,
-            _ => Alignment.bottomRight,
-          },
+          alignment: Alignment.center,
           child: Opacity(
             opacity: visuals.watermarkOpacity.clamp(0, .15),
             child: image ?? BrandLogo(size: visuals.watermarkSize),

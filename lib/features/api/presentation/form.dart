@@ -67,17 +67,48 @@ class _FormState extends State<_Form> {
         if (f.optional && value.isEmpty) continue;
         result[f.key] = switch (f.kind) {
           'money' || 'rate' => moneyInput(value),
-          'int' => int.parse(value),
+          'int' || 'nonNegativeInt' => int.parse(value),
           'bool' => value == 'true',
-          'date' => DateTime.parse(value).toUtc().toIso8601String(),
+          'date' => _dateInput(value),
           _ => value,
         };
+      }
+      final validation = _validateResult(result);
+      if (validation != null) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(SnackBar(content: Text(validation)));
+        return;
       }
     } catch (_) {
       setState(() {});
       return;
     }
     Navigator.pop(context, result);
+  }
+
+  String _dateInput(String value) {
+    final parsed = DateTime.parse(value);
+    final year = parsed.year.toString().padLeft(4, '0');
+    final month = parsed.month.toString().padLeft(2, '0');
+    final day = parsed.day.toString().padLeft(2, '0');
+    return '$year-$month-$day';
+  }
+
+  String? _validateResult(Json result) {
+    final reason = '${result['reason'] ?? ''}'.trim();
+    if (result['stage'] == 'rejected' && reason.isEmpty) {
+      return 'Indique o motivo da recusa.';
+    }
+    if (result['decision'] == 'rejected' && reason.isEmpty) {
+      return 'Indique o motivo da decisão.';
+    }
+    final min = result['minAmountCents'] ?? result['minimumAmountCents'];
+    final max = result['maxAmountCents'] ?? result['maximumAmountCents'];
+    if (min is num && max is num && min > max) {
+      return 'O valor mínimo não pode ser superior ao valor máximo.';
+    }
+    return null;
   }
 
   String? _validateField(Field field, String? raw) {
@@ -97,10 +128,14 @@ class _FormState extends State<_Form> {
     if (field.kind == 'date' && DateTime.tryParse(value) == null) {
       return 'Seleccione uma data válida.';
     }
-    if (field.kind == 'int') {
+    if (field.kind == 'int' || field.kind == 'nonNegativeInt') {
       final parsed = int.tryParse(value);
-      if (parsed == null || parsed < 1)
-        return 'Introduza um número inteiro positivo.';
+      final minimum = field.kind == 'nonNegativeInt' ? 0 : 1;
+      if (parsed == null || parsed < minimum) {
+        return field.kind == 'nonNegativeInt'
+            ? 'Introduza um número inteiro igual ou superior a zero.'
+            : 'Introduza um número inteiro positivo.';
+      }
     }
     if (field.kind == 'money' || field.kind == 'rate') {
       try {
@@ -118,6 +153,11 @@ class _FormState extends State<_Form> {
     }
     if (_nameKeys.contains(field.key) && value.length < 2) {
       return 'Introduza um nome válido.';
+    }
+    final length = _lengths[field.key];
+    if (length != null &&
+        (value.length < length.$1 || value.length > length.$2)) {
+      return 'Use entre ${length.$1} e ${length.$2} caracteres.';
     }
     return null;
   }
@@ -142,6 +182,15 @@ class _FormState extends State<_Form> {
     'tradingName',
     'representative',
     'managerName',
+  };
+  static const _lengths = <String, (int, int)>{
+    'name': (2, 160),
+    'document': (3, 80),
+    'activity': (1, 200),
+    'location': (1, 200),
+    'gender': (1, 40),
+    'maritalStatus': (1, 40),
+    'address': (1, 300),
   };
 
   DateTime? _dateFromController(TextEditingController controller) {
@@ -216,7 +265,13 @@ class _FormState extends State<_Form> {
                               ? const Icon(Icons.search)
                               : null,
                         ),
-                        keyboardType: ['money', 'rate', 'int'].contains(f.kind)
+                        keyboardType:
+                            [
+                              'money',
+                              'rate',
+                              'int',
+                              'nonNegativeInt',
+                            ].contains(f.kind)
                             ? const TextInputType.numberWithOptions(
                                 decimal: true,
                               )

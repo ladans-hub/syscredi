@@ -1,15 +1,15 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../../../core/widgets/operation_feedback.dart';
 import '../../api/domain/repository.dart';
 import '../domain/settings_schema.dart';
 
 SettingsData copySettings(SettingsData value) =>
     Map<String, dynamic>.from(jsonDecode(jsonEncode(value)) as Map);
 
-/// Local demonstration store. No authentication, financial or server policy is
-/// changed here. Audit entries are append-only through this interface; a local
-/// mock store cannot offer the tamper resistance of a server audit service.
+/// Controls the editable institutional settings draft and persists changes
+/// through the central repository when one is available.
 class InstitutionSettingsController extends ChangeNotifier {
   InstitutionSettingsController({
     required this.scope,
@@ -51,15 +51,25 @@ class InstitutionSettingsController extends ChangeNotifier {
               .toList();
         }
       } else {
-        final rows = await repository!.get(
+        final response = await repository!.get(
           '/organization-settings?limit=100&offset=0',
         );
+        final rows = response is Map && response['data'] is List
+            ? response['data'] as List
+            : response as List;
         final remote = <String, dynamic>{};
-        for (final row in rows as List) {
+        for (final row in rows) {
           final item = Map<String, dynamic>.from(row as Map);
-          remote['${item['key']}'] = item['value'];
+          final key = '${item['key']}';
+          if (key.startsWith('asset.')) {
+            final assets =
+                remote.putIfAbsent('assets', () => <String, dynamic>{}) as Map;
+            assets[key.substring('asset.'.length)] = item['value'];
+          } else {
+            remote[key] = item['value'];
+          }
         }
-        saved = {...defaultSettings(), ...remote};
+        saved = normalizeSettings(remote);
       }
       draft = copySettings(saved);
       final last = prefs.getString('$_key.category');
@@ -146,8 +156,9 @@ class InstitutionSettingsController extends ChangeNotifier {
       _emit();
       return false;
     }
+    final normalizedDraft = normalizeSettings(draft);
     try {
-      validateImport({'version': 1, 'settings': draft});
+      validateImport({'version': 1, 'settings': normalizedDraft});
     } on FormatException catch (failure) {
       error = failure.message;
       _emit();
@@ -156,8 +167,11 @@ class InstitutionSettingsController extends ChangeNotifier {
     saving = true;
     error = null;
     _emit();
-    final next = copySettings(draft);
-    final changes = changedKeys
+    final next = copySettings(normalizedDraft);
+    final normalizedChangedKeys = next.keys
+        .where((key) => jsonEncode(saved[key]) != jsonEncode(next[key]))
+        .toList();
+    final changes = normalizedChangedKeys
         .map(
           (k) => <String, dynamic>{
             'field': k,
@@ -187,21 +201,23 @@ class InstitutionSettingsController extends ChangeNotifier {
         );
         if (!success) throw StateError('Storage write failed');
       } else {
-        await repository!.write('POST', '/organization-settings/batch', {
-          'settings': [
-            for (final key in changedKeys) {'key': key, 'value': next[key]},
-          ],
-          'reason': reason,
-        });
+        for (final batch in _settingsBatches(normalizedChangedKeys, next)) {
+          await repository!.write('POST', '/organization-settings/batch', {
+            'settings': batch,
+            'reason': reason,
+          });
+        }
       }
       saved = next;
       draft = copySettings(next);
       _audit = [..._audit, entry];
       revision++;
       return true;
-    } catch (_) {
-      error =
-          'Não foi possível guardar. As alterações continuam disponíveis para tentar novamente.';
+    } catch (failure) {
+      final detail = feedbackMessage(failure);
+      error = detail.isEmpty
+          ? 'Não foi possível guardar. As alterações continuam disponíveis para tentar novamente.'
+          : 'Não foi possível guardar: $detail';
       return false;
     } finally {
       saving = false;
@@ -389,6 +405,65 @@ class InstitutionSettingsController extends ChangeNotifier {
       }
     }
     return copySettings(value);
+  }
+
+  static SettingsData normalizeSettings(Map<dynamic, dynamic> incoming) {
+    final defaults = defaultSettings();
+    return {
+      ...defaults,
+      for (final entry in incoming.entries)
+        if (defaults.containsKey('${entry.key}')) '${entry.key}': entry.value,
+    };
+  }
+
+  static List<List<Json>> _settingsBatches(
+    List<String> keys,
+    SettingsData values, {
+    int maximumBytes = 3 * 1024 * 1024,
+  }) {
+    final batches = <List<Json>>[];
+    var batch = <Json>[];
+    var batchBytes = 0;
+    for (final key in keys) {
+      if (key == 'assets') {
+        final assets = values[key] as Map? ?? const {};
+        for (final asset in assets.entries) {
+          final setting = <String, dynamic>{
+            'key': 'asset.${asset.key}',
+            'value': asset.value,
+          };
+          final settingBytes = utf8.encode(jsonEncode(setting)).length;
+          if (settingBytes > maximumBytes) {
+            throw const FormatException(
+              'O logótipo, carimbo ou assinatura é demasiado grande. Volte a seleccionar uma imagem menor.',
+            );
+          }
+          if (batch.isNotEmpty) {
+            batches.add(batch);
+            batch = <Json>[];
+            batchBytes = 0;
+          }
+          batches.add([setting]);
+        }
+        continue;
+      }
+      final setting = <String, dynamic>{'key': key, 'value': values[key]};
+      final settingBytes = utf8.encode(jsonEncode(setting)).length;
+      if (settingBytes > maximumBytes) {
+        throw const FormatException(
+          'O logótipo, carimbo ou assinatura é demasiado grande. Volte a seleccionar uma imagem menor.',
+        );
+      }
+      if (batch.isNotEmpty && batchBytes + settingBytes > maximumBytes) {
+        batches.add(batch);
+        batch = <Json>[];
+        batchBytes = 0;
+      }
+      batch.add(setting);
+      batchBytes += settingBytes;
+    }
+    if (batch.isNotEmpty) batches.add(batch);
+    return batches;
   }
 
   @override

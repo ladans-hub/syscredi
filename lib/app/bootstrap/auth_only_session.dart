@@ -14,9 +14,12 @@ Future<AppSession> connectAuthOnly() async {
   await Supabase.initialize(
     url: config.supabaseUrl,
     publishableKey: config.publishableKey,
-    authOptions: const FlutterAuthClientOptions(detectSessionInUri: false),
+    authOptions: const FlutterAuthClientOptions(detectSessionInUri: true),
   );
-  final auth = SupabaseAuthGateway(Supabase.instance.client);
+  final auth = SupabaseAuthGateway(
+    Supabase.instance.client,
+    passwordRecoveryUrl: config.effectivePasswordRecoveryUrl,
+  );
   final session = SessionService(
     auth,
     _MockRepository(auth),
@@ -152,7 +155,13 @@ class _MockRepository implements Repository {
     final result = await auth.client.auth.signUp(
       email: '${body['managerEmail']}'.trim(),
       password: '${body['password']}',
-      data: {'name': '${body['managerName']}'.trim()},
+      data: {
+        'name': '${body['managerName']}'.trim(),
+        'organization_name': '${body['organizationName']}'.trim(),
+        'email_sender_name': '${body['organizationName']}'.trim().isEmpty
+            ? 'Syscredi'
+            : '${body['organizationName']}'.trim(),
+      },
     );
     final refreshToken = result.session?.refreshToken;
     if (refreshToken == null || refreshToken.isEmpty) {

@@ -38,12 +38,7 @@ class SyscrediApp extends StatelessWidget {
           Theme.of(context).brightness,
           brandPalette.value.primary,
         ),
-        child: Stack(
-          children: [
-            child ?? const SizedBox.shrink(),
-            const BrandWatermarkOverlay(),
-          ],
-        ),
+        child: child ?? const SizedBox.shrink(),
       ),
       home: Root(onTheme: (value) => themeMode.value = value),
     ),

@@ -18,6 +18,7 @@ Future<AppSession> connect(AppConfig config) async {
   final problem = config.validate();
   if (problem != null) throw StateError(problem);
   const storage = DeviceSecretStore();
+  const operationalStorage = DeviceOperationalStore();
   await Supabase.initialize(
     url: config.supabaseUrl,
     publishableKey: config.publishableKey,
@@ -27,14 +28,17 @@ Future<AppSession> connect(AppConfig config) async {
         'syscredi.${config.scope}.session',
       ),
       pkceAsyncStorage: SecurePkceStorage(storage, config.scope),
-      detectSessionInUri: false,
+      detectSessionInUri: true,
     ),
   );
-  final auth = SupabaseAuthGateway(Supabase.instance.client);
+  final auth = SupabaseAuthGateway(
+    Supabase.instance.client,
+    passwordRecoveryUrl: config.effectivePasswordRecoveryUrl,
+  );
   final repository = ApiClient(
     baseUrl: config.apiUrl,
     scope: config.scope,
-    store: storage,
+    store: operationalStorage,
     userId: () => auth.userId,
     accessToken: auth.accessToken,
     refreshToken: auth.refreshToken,

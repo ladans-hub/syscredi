@@ -1,28 +1,44 @@
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart' hide Icons;
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:uuid/uuid.dart';
 
-import '../../../app/theme/fluent_icons_compat.dart';
 import '../../../app/theme/fluent_design.dart';
+import '../../../app/theme/fluent_icons_compat.dart';
+import '../../../core/licensing/hardware_device_id.dart';
+import '../../../core/widgets/activation_contact_card.dart';
 import '../../../core/widgets/operation_feedback.dart';
+import '../application/subscription_service.dart';
 import '../domain/repository.dart';
 
 class PlansView extends StatefulWidget {
-  const PlansView({required this.repository, super.key});
+  const PlansView({
+    required this.repository,
+    required this.organizationId,
+    this.onActivated,
+    super.key,
+  });
   final Repository repository;
+  final String organizationId;
+  final VoidCallback? onActivated;
 
   @override
   State<PlansView> createState() => _PlansViewState();
 }
 
 class _PlansViewState extends State<PlansView> {
+  static const _licenseSecret = 'syscredi-license-v1-rotate-in-release';
+  static const _organizationUserLimit = 4;
   String? _selected;
   String _current = 'Trial';
-  int _trialDays = 14;
+  String _currentPackage = 'Básico';
+  int _trialDays = SubscriptionService.trialDaysTotal;
   final _activationCode = TextEditingController();
-  String _deviceId = const Uuid().v4().toUpperCase();
+  String _deviceId = 'A CARREGAR...';
   bool _activating = false;
+  bool _activationExpanded = true;
 
   static const _plans = <_Plan>[
     _Plan(
@@ -57,16 +73,19 @@ class _PlansViewState extends State<PlansView> {
   }
 
   Future<void> _loadSubscription() async {
-    try {
-      final data = Map<String, dynamic>.from(
-        await widget.repository.get('/subscription/status') as Map,
-      );
-      if (!mounted || data['active'] != true) return;
-      setState(() {
-        _current = '${data['plan'] ?? 'Activo'}';
-        _trialDays = 0;
-      });
-    } catch (_) {}
+    final status = await SubscriptionService(widget.repository).status();
+    if (!mounted) return;
+    setState(() {
+      _deviceId = status.deviceId;
+      _current = status.trial ? 'Trial' : status.plan ?? 'Activo';
+      _currentPackage = switch (status.package) {
+        'pro' => 'Pro',
+        'premium' => 'Premium',
+        _ => 'Básico',
+      };
+      _trialDays = status.trialDaysLeft;
+      _activationExpanded = status.trial;
+    });
   }
 
   @override
@@ -77,9 +96,7 @@ class _PlansViewState extends State<PlansView> {
 
   Future<void> _loadDeviceId() async {
     final prefs = await SharedPreferences.getInstance();
-    final saved = prefs.getString('syscredi.device.id');
-    final id = saved ?? const Uuid().v4();
-    if (saved == null) await prefs.setString('syscredi.device.id', id);
+    final id = await HardwareDeviceId.resolve(prefs);
     if (mounted) setState(() => _deviceId = id.toUpperCase());
   }
 
@@ -95,15 +112,36 @@ class _PlansViewState extends State<PlansView> {
     }
     setState(() => _activating = true);
     try {
+      final parsed = _validateActivationCode(code);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('syscredi.license.plan', parsed.plan);
+      await prefs.setString(
+        'syscredi.license.expiresAt',
+        parsed.expiresAt.toIso8601String(),
+      );
+      await prefs.setString('syscredi.license.code', code);
+      await prefs.setString(
+        'syscredi.license.organizationId',
+        widget.organizationId,
+      );
+      await prefs.setString('syscredi.license.package', parsed.package);
+      if (parsed.deviceLimit == null) {
+        await prefs.remove('syscredi.license.deviceLimit');
+      } else {
+        await prefs.setInt('syscredi.license.deviceLimit', parsed.deviceLimit!);
+      }
       await widget.repository.write('POST', '/subscription-history', {
-        'plan': _selected ?? _current,
+        'plan': parsed.plan,
         'codeFingerprint': code,
-        'expiresAt': DateTime.now()
-            .add(const Duration(days: 365))
-            .toUtc()
-            .toIso8601String(),
+        'expiresAt': parsed.expiresAt.toIso8601String(),
       });
-      await _loadSubscription();
+      if (mounted) {
+        setState(() {
+          _current = parsed.plan;
+          _trialDays = 0;
+        });
+        widget.onActivated?.call();
+      }
       if (mounted) {
         await showFeedbackDialog(
           context,
@@ -124,6 +162,70 @@ class _PlansViewState extends State<PlansView> {
     } finally {
       if (mounted) setState(() => _activating = false);
     }
+  }
+
+  _ActivationLicense _validateActivationCode(String code) {
+    final normalizedCode = code.replaceAll(RegExp(r'\s+'), '');
+    final parts = normalizedCode.split('|');
+    if (parts.length != 7) {
+      throw const FormatException(
+        'Formato de licença inválido. Gere uma nova licença no Syscredi Activator atualizado.',
+      );
+    }
+    final plan = parts[0];
+    final expiresAt = DateTime.tryParse('${parts[1]}T23:59:59.999Z');
+    final deviceId = parts[2].toLowerCase();
+    final organizationId = parts[3].toLowerCase();
+    final package = parts[4].toLowerCase();
+    final deviceLimit = parts[5] == 'unlimited' ? null : int.tryParse(parts[5]);
+    final signature = parts[6].toLowerCase();
+    if (expiresAt == null || expiresAt.isBefore(DateTime.now().toUtc())) {
+      throw const FormatException('A licença está expirada.');
+    }
+    final expectedOrganization = widget.organizationId.trim().toLowerCase();
+    if (expectedOrganization.isEmpty) {
+      throw const FormatException(
+        'O ID da organização não está disponível nesta sessão. Entre novamente antes de ativar.',
+      );
+    }
+    if (organizationId != expectedOrganization) {
+      throw FormatException(
+        'A licença pertence a outra organização. Esperado: ${widget.organizationId}.',
+      );
+    }
+    const validPlans = {'quarterly', 'semiannual', 'annual', 'lifetime'};
+    if (!validPlans.contains(plan)) {
+      throw const FormatException('O plano presente na licença é inválido.');
+    }
+    const validPackages = {'basic', 'pro', 'premium'};
+    if (!validPackages.contains(package) ||
+        (package != 'premium' && (deviceLimit == null || deviceLimit < 1))) {
+      throw const FormatException('O pacote presente na licença é inválido.');
+    }
+    final prefix =
+        '$plan|${parts[1]}|$deviceId|$organizationId|$package|${parts[5]}';
+    final expected = Hmac(
+      sha256,
+      utf8.encode(_licenseSecret),
+    ).convert(utf8.encode(prefix)).toString().substring(0, 32);
+    if (signature != expected) {
+      throw const FormatException(
+        'A assinatura da licença é inválida. Copie novamente o código completo.',
+      );
+    }
+    final label = switch (plan) {
+      'quarterly' => 'Trimestral',
+      'semiannual' => 'Semestral',
+      'annual' => 'Anual',
+      'lifetime' => 'Vitalício',
+      _ => plan,
+    };
+    return _ActivationLicense(
+      label,
+      expiresAt,
+      package: package,
+      deviceLimit: deviceLimit,
+    );
   }
 
   Future<void> _choose(_Plan plan) async {
@@ -224,6 +326,8 @@ class _PlansViewState extends State<PlansView> {
                   ),
                 ],
               ),
+              const SizedBox(height: 20),
+              const ActivationContactCard(premium: true),
               const SizedBox(height: 24),
               Card(
                 elevation: 0,
@@ -246,7 +350,7 @@ class _PlansViewState extends State<PlansView> {
                         child: Text(
                           _current == 'Trial'
                               ? 'Plano atual: Trial · $_trialDays dias restantes'
-                              : 'Plano atual: $_current',
+                              : 'Plano atual: $_current · $_currentPackage',
                           style: const TextStyle(fontWeight: FontWeight.w700),
                         ),
                       ),
@@ -277,6 +381,7 @@ class _PlansViewState extends State<PlansView> {
                       plan: plan,
                       current: _current == plan.name,
                       selected: _selected == plan.name,
+                      organizationUsers: _organizationUserLimit,
                       width: cardWidth,
                       onTap: () => _choose(plan),
                     ),
@@ -284,113 +389,267 @@ class _PlansViewState extends State<PlansView> {
               ),
               const SizedBox(height: 28),
               FluentSurface(
-                padding: const EdgeInsets.all(24),
+                padding: EdgeInsets.zero,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Icon(Icons.lock_outline, color: scheme.primary),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Activar plano',
-                                style: Theme.of(context).textTheme.titleLarge
-                                    ?.copyWith(fontWeight: FontWeight.w800),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                'Insira o código UUID fornecido pelo proprietário para associar a licença a este dispositivo.',
-                                style: Theme.of(context).textTheme.bodyMedium
-                                    ?.copyWith(color: scheme.onSurfaceVariant),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 20),
-                    TextField(
-                      controller: _activationCode,
-                      maxLength: 100,
-                      textInputAction: TextInputAction.done,
-                      inputFormatters: [
-                        FilteringTextInputFormatter.allow(
-                          RegExp(r'[A-Za-z0-9|.\-]'),
-                        ),
-                      ],
-                      decoration: const InputDecoration(
-                        labelText: 'Código de ativação',
-                        hintText: 'Cole aqui o código UUID',
-                        prefixIcon: Icon(Icons.assignment_outlined),
+                    InkWell(
+                      onTap: () => setState(
+                        () => _activationExpanded = !_activationExpanded,
                       ),
-                      onSubmitted: (_) => _activate(),
-                    ),
-                    const SizedBox(height: 4),
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton.icon(
-                        onPressed: _activating ? null : _activate,
-                        icon: _activating
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(Icons.verified_outlined),
-                        label: Text(
-                          _activating ? 'A validar…' : 'Activar código',
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    Text(
-                      'ID do dispositivo',
-                      style: Theme.of(context).textTheme.labelLarge,
-                    ),
-                    const SizedBox(height: 5),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: SelectableText(
-                            _deviceId,
-                            style: TextStyle(
-                              color: scheme.primary,
-                              fontFamily: 'monospace',
-                              letterSpacing: .4,
+                      borderRadius: BorderRadius.circular(12),
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Row(
+                          children: [
+                            Icon(Icons.lock_outline, color: scheme.primary),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    _current == 'Trial'
+                                        ? 'Activar plano'
+                                        : 'Alterar ou renovar plano',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleLarge
+                                        ?.copyWith(fontWeight: FontWeight.w800),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    _activationExpanded
+                                        ? 'Insira o código fornecido pelo proprietário para associar a licença à organização.'
+                                        : 'A organização já possui um plano ativo. Clique para mostrar a ativação.',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodyMedium
+                                        ?.copyWith(
+                                          color: scheme.onSurfaceVariant,
+                                        ),
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
+                            const SizedBox(width: 12),
+                            TextButton.icon(
+                              onPressed: () => setState(
+                                () =>
+                                    _activationExpanded = !_activationExpanded,
+                              ),
+                              icon: Icon(
+                                _activationExpanded
+                                    ? Icons.visibility_off_outlined
+                                    : Icons.visibility_outlined,
+                                size: 18,
+                              ),
+                              label: Text(
+                                _activationExpanded ? 'Ocultar' : 'Mostrar',
+                              ),
+                            ),
+                          ],
                         ),
-                        IconButton(
-                          tooltip: 'Copiar ID do dispositivo',
-                          onPressed: () async {
-                            await Clipboard.setData(
-                              ClipboardData(text: _deviceId),
-                            );
-                            if (mounted) {
-                              await showFeedbackDialog(
-                                context,
-                                title: 'ID copiado',
-                                message: 'O ID do dispositivo foi copiado.',
-                                success: true,
-                              );
-                            }
-                          },
-                          icon: const Icon(Icons.document),
-                        ),
-                      ],
+                      ),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Envie este ID ao proprietário para gerar o código de ativação.',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
+                    AnimatedCrossFade(
+                      duration: const Duration(milliseconds: 220),
+                      crossFadeState: _activationExpanded
+                          ? CrossFadeState.showSecond
+                          : CrossFadeState.showFirst,
+                      firstChild: const SizedBox(width: double.infinity),
+                      secondChild: Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            TextField(
+                              controller: _activationCode,
+                              maxLength: 300,
+                              textInputAction: TextInputAction.done,
+                              decoration: InputDecoration(
+                                labelText: 'Código de ativação',
+                                hintText: 'Cole aqui o código completo',
+                                prefixIcon: const Icon(
+                                  Icons.assignment_outlined,
+                                ),
+                                suffixIcon: IconButton(
+                                  tooltip: 'Colar código',
+                                  onPressed: () async {
+                                    final data = await Clipboard.getData(
+                                      Clipboard.kTextPlain,
+                                    );
+                                    final value = data?.text?.trim();
+                                    if (value == null || value.isEmpty) {
+                                      if (!context.mounted) return;
+                                      await showFeedbackDialog(
+                                        context,
+                                        title: 'Área de transferência vazia',
+                                        message:
+                                            'Copie primeiro o código gerado pelo Syscredi Activator.',
+                                      );
+                                      return;
+                                    }
+                                    _activationCode.text = value;
+                                    _activationCode.selection =
+                                        TextSelection.collapsed(
+                                          offset: value.length,
+                                        );
+                                  },
+                                  icon: const Icon(Icons.document),
+                                ),
+                              ),
+                              onSubmitted: (_) => _activate(),
+                            ),
+                            const SizedBox(height: 4),
+                            SizedBox(
+                              width: double.infinity,
+                              child: FilledButton.icon(
+                                onPressed: _activating ? null : _activate,
+                                icon: _activating
+                                    ? const SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(Icons.verified_outlined),
+                                label: Text(
+                                  _activating ? 'A validar…' : 'Activar código',
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 20),
+                            Container(
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                color: scheme.surfaceContainerLow,
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                  color: scheme.outlineVariant,
+                                ),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Container(
+                                        width: 38,
+                                        height: 38,
+                                        decoration: BoxDecoration(
+                                          color: scheme.primary.withValues(
+                                            alpha: .1,
+                                          ),
+                                          borderRadius: BorderRadius.circular(
+                                            10,
+                                          ),
+                                        ),
+                                        child: Icon(
+                                          Icons.card_membership_outlined,
+                                          color: scheme.primary,
+                                          size: 20,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 11),
+                                      const Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              'Identificadores da licença',
+                                              style: TextStyle(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.w800,
+                                              ),
+                                            ),
+                                            SizedBox(height: 2),
+                                            Text(
+                                              'Necessários para vincular o plano à organização.',
+                                              style: TextStyle(fontSize: 11),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      TextButton.icon(
+                                        onPressed: () async {
+                                          await Clipboard.setData(
+                                            ClipboardData(
+                                              text:
+                                                  'Dispositivo: $_deviceId\nOrganização: ${widget.organizationId}',
+                                            ),
+                                          );
+                                          if (!context.mounted) return;
+                                          await showFeedbackDialog(
+                                            context,
+                                            title: 'IDs copiados',
+                                            message:
+                                                'Os identificadores foram copiados.',
+                                            success: true,
+                                          );
+                                        },
+                                        icon: const Icon(
+                                          Icons.document,
+                                          size: 17,
+                                        ),
+                                        label: const Text('Copiar ambos'),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 14),
+                                  _IdentifierCard(
+                                    icon: Icons.card_membership_outlined,
+                                    label: 'ID do dispositivo',
+                                    value: _deviceId,
+                                    onCopy: () => _copyIdentifier(
+                                      context,
+                                      _deviceId,
+                                      'O ID do dispositivo foi copiado.',
+                                    ),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  _IdentifierCard(
+                                    icon: Icons.business_outlined,
+                                    label: 'ID da organização',
+                                    value: widget.organizationId,
+                                    onCopy: () => _copyIdentifier(
+                                      context,
+                                      widget.organizationId,
+                                      'O ID da organização foi copiado.',
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Icon(
+                                        Icons.help_outline,
+                                        size: 16,
+                                        color: scheme.primary,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          'Envie estes IDs ao proprietário para gerar o código de ativação.',
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodySmall
+                                              ?.copyWith(
+                                                color: scheme.onSurfaceVariant,
+                                                height: 1.4,
+                                              ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ],
@@ -402,6 +661,99 @@ class _PlansViewState extends State<PlansView> {
       },
     );
   }
+
+  Future<void> _copyIdentifier(
+    BuildContext context,
+    String value,
+    String message,
+  ) async {
+    await Clipboard.setData(ClipboardData(text: value));
+    if (!context.mounted) return;
+    await showFeedbackDialog(
+      context,
+      title: 'ID copiado',
+      message: message,
+      success: true,
+    );
+  }
+}
+
+class _IdentifierCard extends StatelessWidget {
+  const _IdentifierCard({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.onCopy,
+  });
+
+  final IconData icon;
+  final String label, value;
+  final VoidCallback onCopy;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(13, 10, 8, 10),
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: scheme.onSurfaceVariant),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label.toUpperCase(),
+                  style: TextStyle(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: .7,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                SelectableText(
+                  value.isEmpty ? 'Não disponível' : value,
+                  style: TextStyle(
+                    color: scheme.primary,
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: .25,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Copiar $label',
+            onPressed: value.isEmpty ? null : onCopy,
+            icon: const Icon(Icons.document, size: 19),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ActivationLicense {
+  const _ActivationLicense(
+    this.plan,
+    this.expiresAt, {
+    required this.package,
+    required this.deviceLimit,
+  });
+
+  final String plan;
+  final DateTime expiresAt;
+  final String package;
+  final int? deviceLimit;
 }
 
 class _Plan {
@@ -416,11 +768,13 @@ class _PlanCard extends StatelessWidget {
     required this.plan,
     required this.current,
     required this.selected,
+    required this.organizationUsers,
     required this.onTap,
     required this.width,
   });
   final _Plan plan;
   final bool current, selected;
+  final int organizationUsers;
   final VoidCallback onTap;
   final double width;
 
@@ -481,6 +835,26 @@ class _PlanCard extends StatelessWidget {
               const _Feature('Acesso completo ao Syscredi'),
               const _Feature('Atualizações e suporte'),
               const _Feature('Dados protegidos e auditáveis'),
+              const SizedBox(height: 14),
+              _PackageLine(
+                name: 'Básico',
+                detail: '1 dispositivo',
+                price: plan.price,
+              ),
+              const SizedBox(height: 7),
+              _PackageLine(
+                name: 'Pro',
+                detail: '$organizationUsers dispositivos',
+                price: _addPrice(plan.price, 459),
+                recommended: true,
+              ),
+              const SizedBox(height: 7),
+              _PackageLine(
+                name: 'Premium',
+                detail: 'Dispositivos ilimitados',
+                price: _addPrice(plan.price, 1159),
+                premium: true,
+              ),
               const SizedBox(height: 18),
               SizedBox(
                 width: double.infinity,
@@ -494,6 +868,16 @@ class _PlanCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  String _addPrice(String value, int surcharge) {
+    final digits = value.replaceAll(RegExp(r'[^0-9]'), '');
+    final total = (int.tryParse(digits) ?? 0) + surcharge;
+    final formatted = total.toString().replaceAllMapped(
+      RegExp(r'\B(?=(\d{3})+(?!\d))'),
+      (_) => ' ',
+    );
+    return '$formatted MT';
   }
 }
 
@@ -533,4 +917,120 @@ class _Badge extends StatelessWidget {
       style: TextStyle(fontSize: 10, color: color, fontWeight: FontWeight.w700),
     ),
   );
+}
+
+class _PackageLine extends StatelessWidget {
+  const _PackageLine({
+    required this.name,
+    required this.detail,
+    required this.price,
+    this.recommended = false,
+    this.premium = false,
+  });
+
+  final String name, detail, price;
+  final bool recommended, premium;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final premiumColor = const Color(0xFFC49322);
+    final accent = premium ? premiumColor : scheme.primary;
+    final highlighted = recommended || premium;
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: highlighted ? 11 : 10,
+        vertical: highlighted ? 10 : 9,
+      ),
+      decoration: BoxDecoration(
+        color: highlighted
+            ? accent.withValues(alpha: recommended ? .09 : .10)
+            : scheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: highlighted
+              ? accent.withValues(alpha: recommended ? .78 : .65)
+              : scheme.outlineVariant,
+          width: recommended ? 1.6 : (premium ? 1.4 : 1),
+        ),
+        boxShadow: recommended
+            ? [
+                BoxShadow(
+                  color: accent.withValues(alpha: .10),
+                  blurRadius: 10,
+                  offset: const Offset(0, 3),
+                ),
+              ]
+            : null,
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      name,
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w800,
+                        color: highlighted ? accent : null,
+                      ),
+                    ),
+                    if (recommended) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: accent.withValues(alpha: .13),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          'Recomendado',
+                          style: TextStyle(
+                            color: accent,
+                            fontSize: 7.5,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ],
+                    if (premium) ...[
+                      const SizedBox(width: 5),
+                      Icon(
+                        Icons.verified_outlined,
+                        size: 14,
+                        color: premiumColor,
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  detail,
+                  style: TextStyle(
+                    fontSize: 9.5,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Text(
+            price,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              color: highlighted ? accent : scheme.primary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

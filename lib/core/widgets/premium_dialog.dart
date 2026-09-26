@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:fluent_ui/fluent_ui.dart' show FluentIcons;
+
+import '../../app/theme/design_tokens.dart';
 
 /// Shared Fluent dialog shell for detail, review and edit experiences.
 /// Header and command footer stay visible while long content scrolls.
@@ -9,7 +10,7 @@ class PremiumDialog extends StatelessWidget {
     required this.content,
     this.actions = const [],
     this.subtitle,
-    this.icon = FluentIcons.document,
+    this.icon = FluentSystemIcons.document,
     this.width = 760,
     this.showClose = true,
     super.key,
@@ -88,7 +89,7 @@ class PremiumDialog extends StatelessWidget {
                     IconButton(
                       tooltip: 'Fechar janela',
                       onPressed: () => Navigator.maybePop(context),
-                      icon: const Icon(FluentIcons.clear, size: 16),
+                      icon: const Icon(Icons.close, size: 16),
                     ),
                 ],
               ),

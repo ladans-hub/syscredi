@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:typed_data';
 import '../domain/repository.dart';
 
@@ -44,11 +45,16 @@ class ReliableRepository implements Repository {
     try {
       final raw = await transport.request('GET', path);
       final result = raw is Map && raw['data'] is List ? raw['data'] : raw;
+      developer.log(
+        'GET $path -> ${result.runtimeType}${result is List ? ' (${result.length})' : ''}',
+        name: 'syscredi.api',
+      );
       // The API is authoritative. Cache only confirmed responses for
       // rendering; writes always invalidate the affected resource cache.
       await store.write(cacheKey, jsonEncode(result));
       return result;
     } on ApiFailure catch (error) {
+      developer.log('GET $path failed', name: 'syscredi.api', error: error);
       if (!error.uncertain) rethrow;
       final cached = await store.read(cacheKey);
       if (cached != null) return jsonDecode(cached);
@@ -61,19 +67,15 @@ class ReliableRepository implements Repository {
 
   String _cacheKey(String path) {
     final actor = userId() ?? 'anonymous';
-    // Lists are requested with different pagination/query strings. They must
-    // share one cache entry per resource so a confirmed write invalidates the
-    // complete list instead of leaving an old paginated copy to reappear when
-    // a later read is or uncertain.
-    final normalizedPath = path.split('?').first;
-    final safe = base64Url.encode(utf8.encode(normalizedPath));
-    return 'syscredi.v2.$scope.cache.$actor.$_cacheEpoch.$safe';
+    final safe = base64Url.encode(utf8.encode(path));
+    return 'syscredi.v3.$scope.cache.$actor.$_cacheEpoch.$safe';
   }
 
   Future<void> _invalidate(String path) async {
     final actor = userId();
     if (actor == null) return;
     final resource = path.split('?').first;
+    clearReadCache();
     await store.delete(_cacheKey(resource));
     // A mutation of /clients/:id (or any other item endpoint) also makes the
     // parent collection stale. Clear both keys so an/uncertain read
@@ -220,8 +222,13 @@ class ReliableRepository implements Repository {
         idempotencyKey: operation.key,
         expectedUser: operation.userId,
       );
-      await _save(operation.userId, []);
-      await _invalidate(operation.path);
+      try {
+        await _save(operation.userId, []);
+        await _invalidate(operation.path);
+      } catch (_) {
+        // The server result is authoritative. A local cache/key-value cleanup
+        // failure must not report a confirmed remote mutation as failed.
+      }
       final resource = operation.path.split('?').first;
       final parts = resource.split('/');
       if (parts.length > 2 && parts[1].isNotEmpty) {}

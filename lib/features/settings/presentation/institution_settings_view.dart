@@ -4,6 +4,9 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:fluent_ui/fluent_ui.dart' show FluentIcons;
 import 'package:file_selector/file_selector.dart';
+import 'package:image/image.dart' as img;
+import '../../../app/theme/app_theme.dart';
+import '../../../app/theme/design_tokens.dart';
 import '../../../app/theme/fluent_design.dart';
 import '../../../core/widgets/premium_dialog.dart';
 import '../../../core/widgets/operation_feedback.dart';
@@ -18,10 +21,12 @@ class InstitutionSettingsView extends StatefulWidget {
   const InstitutionSettingsView({
     required this.controller,
     this.canAdminister = true,
+    this.general = false,
     super.key,
   });
   final InstitutionSettingsController controller;
   final bool canAdminister;
+  final bool general;
   @override
   State<InstitutionSettingsView> createState() =>
       InstitutionSettingsViewState();
@@ -37,14 +42,37 @@ class InstitutionSettingsViewState extends State<InstitutionSettingsView> {
   String _role = 'Gestor', _document = 'Contrat', _userStatus = 'Todos';
   bool _showErrors = false, _uploading = false;
   int _userPage = 0;
-  String get category => model.category;
-  SettingsCategory get current =>
-      settingsCategories.firstWhere((c) => c.id == category);
+  static const _generalCategoryIds = {
+    'security',
+    'appearance',
+    'notifications',
+    'data',
+    'regional',
+  };
+  List<SettingsCategory> get availableCategories => settingsCategories
+      .where(
+        (category) =>
+            category.id != 'users' &&
+            _generalCategoryIds.contains(category.id) == widget.general,
+      )
+      .toList();
+  String get category => availableCategories.any((c) => c.id == model.category)
+      ? model.category
+      : availableCategories.first.id;
+  SettingsCategory get current => availableCategories.firstWhere(
+    (item) => item.id == category,
+    orElse: () => availableCategories.first,
+  );
 
   @override
   void initState() {
     super.initState();
     _document = 'Contrato';
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !availableCategories.any((c) => c.id == category)) {
+        model.selectCategory(availableCategories.first.id);
+      }
+    });
   }
 
   @override
@@ -158,7 +186,7 @@ class InstitutionSettingsViewState extends State<InstitutionSettingsView> {
     if (critical &&
         !await _confirm(
           'Aplicar alterações críticas?',
-          '${model.changedKeys.length} configurações serão actualizadas no ambiente de demonstração. As alterações serão registadas no histórico com o utilizador responsável.',
+          '${model.changedKeys.length} configurações institucionais serão actualizadas. As alterações serão registadas no histórico com o utilizador responsável.',
           action: 'Confirmar e guardar',
         )) {
       return false;
@@ -167,7 +195,16 @@ class InstitutionSettingsViewState extends State<InstitutionSettingsView> {
     if (saved) {
       applyInstitutionSettings(model.saved);
       if (mounted) setState(() => _showErrors = false);
-      _toast('Definições guardadas neste dispositivo.');
+      if (mounted) {
+        await showFeedbackDialog(
+          context,
+          message: model.repository == null
+              ? 'Definições guardadas neste dispositivo.'
+              : 'Definições institucionais guardadas com sucesso.',
+          title: 'Alterações guardadas',
+          success: true,
+        );
+      }
     } else if (model.error != null) {
       _toast(model.error!);
     }
@@ -176,7 +213,7 @@ class InstitutionSettingsViewState extends State<InstitutionSettingsView> {
 
   static const _icons = <String, IconData>{
     'institution': FluentIcons.business_center_logo,
-    'identity': FluentIcons.document,
+    'identity': FluentSystemIcons.document,
     'users': FluentIcons.people,
     'security': FluentIcons.lock,
     'appearance': FluentIcons.color,
@@ -203,7 +240,7 @@ class InstitutionSettingsViewState extends State<InstitutionSettingsView> {
     builder: (context, _) {
       if (model.loading) return _skeleton();
       final colors = Theme.of(context).colorScheme;
-      final matching = settingsCategories.where(_matches).toList();
+      final matching = availableCategories.where(_matches).toList();
       return PopScope(
         canPop: !model.dirty,
         onPopInvokedWithResult: (didPop, result) async {
@@ -240,11 +277,15 @@ class InstitutionSettingsViewState extends State<InstitutionSettingsView> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Definições institucionais',
+                            widget.general
+                                ? 'Definições gerais'
+                                : 'Definições institucionais',
                             style: Theme.of(context).textTheme.headlineSmall,
                           ),
                           Text(
-                            'Administração · ${data['tradeName']}',
+                            widget.general
+                                ? 'Preferências do sistema e do utilizador'
+                                : 'Administração · ${data['tradeName']}',
                             style: TextStyle(color: colors.onSurfaceVariant),
                           ),
                         ],
@@ -252,7 +293,16 @@ class InstitutionSettingsViewState extends State<InstitutionSettingsView> {
                     ),
                   ],
                 ),
-                _badge('Ambiente de demonstração', icon: FluentIcons.info),
+                _badge(
+                  widget.canAdminister
+                      ? widget.general
+                            ? 'Preferências gerais activas'
+                            : 'Configuração institucional activa'
+                      : 'Modo de consulta',
+                  icon: widget.canAdminister
+                      ? FluentIcons.check_mark
+                      : FluentIcons.view,
+                ),
               ],
             ),
             const SizedBox(height: 20),

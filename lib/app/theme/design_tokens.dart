@@ -1,4 +1,6 @@
 import 'package:fluent_ui/fluent_ui.dart' as fluent;
+import 'package:fluentui_system_icons/fluentui_system_icons.dart'
+    as fluent_system;
 import 'package:flutter/material.dart';
 
 /// Shared Fluent 2 tokens. Product widgets should consume these values rather
@@ -56,7 +58,7 @@ abstract final class FluentSystemIcons {
   static const phone = fluent.FluentIcons.phone;
   static const business = fluent.FluentIcons.business_center_logo;
   static const calculator = fluent.FluentIcons.calculator;
-  static const document = fluent.FluentIcons.document;
+  static const document = fluent_system.FluentIcons.document_24_regular;
   static const documentApproval = fluent.FluentIcons.document_approval;
   static const documentSearch = fluent.FluentIcons.document_search;
   static const picture_as_pdf_outlined = fluent.FluentIcons.pdf;
@@ -76,6 +78,11 @@ abstract final class FluentSystemIcons {
   static const calendar = fluent.FluentIcons.calendar;
   static const brightness = fluent.FluentIcons.brightness;
   static const light = fluent.FluentIcons.light;
+  static const systemTheme = fluent_system.FluentIcons.desktop_20_regular;
+  static const darkTheme = fluent_system.FluentIcons.weather_moon_20_regular;
+  static const archive = fluent_system.FluentIcons.archive_20_regular;
+  static const restoreArchive =
+      fluent_system.FluentIcons.archive_arrow_back_20_regular;
 
   /// Neutral person silhouette used for the account/profile entry.
   static const account = fluent.FluentIcons.contact;
