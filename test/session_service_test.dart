@@ -10,6 +10,7 @@ class _Auth implements AuthGateway {
   bool session = true;
   int recoveries = 0;
   String? adopted;
+  Object? logoutError;
   @override
   String? get userId => actor;
   @override
@@ -34,7 +35,10 @@ class _Auth implements AuthGateway {
   Future<void> adoptSession(String refreshToken) async =>
       adopted = refreshToken;
   @override
-  Future<void> logout() async => session = false;
+  Future<void> logout() async {
+    session = false;
+    if (logoutError case final error?) throw error;
+  }
 
   void expire() {
     session = false;
@@ -45,9 +49,11 @@ class _Auth implements AuthGateway {
 
 class _Repository implements Repository {
   Json? registration;
+  ApiFailure? registrationFailure;
   @override
   Future<dynamic> publicWrite(String method, String path, Json body) async {
     registration = body;
+    if (registrationFailure case final failure?) throw failure;
     return {
       'session': {'refresh_token': 'refresh-1'},
     };
@@ -111,6 +117,33 @@ void main() {
     await service.dispose();
   });
 
+  test('cadastro explica conflito de email já existente', () async {
+    final repository = _Repository()
+      ..registrationFailure = const ApiFailure(
+        'User with this email already exists',
+        status: 409,
+      );
+    final service = SessionService(_Auth(), repository);
+
+    await expectLater(
+      service.register(
+        'Gestor',
+        'gestor@example.com',
+        'password123',
+        'Instituição',
+      ),
+      throwsA(
+        isA<ApiFailure>().having(
+          (failure) => failure.message,
+          'message',
+          contains('Esqueci a palavra-passe'),
+        ),
+      ),
+    );
+
+    await service.dispose();
+  });
+
   test('sessão expirada limpa o perfil e notifica o workspace', () async {
     final auth = _Auth();
     final service = SessionService(auth, _Repository());
@@ -118,6 +151,35 @@ void main() {
     expect(service.profile, isNotNull);
     auth.expire();
     await Future<void>.delayed(Duration.zero);
+    expect(service.profile, isNull);
+    await service.dispose();
+    await auth.changes.close();
+  });
+
+  test('logout limpa o perfil mesmo sem evento do gateway', () async {
+    final auth = _Auth();
+    final service = SessionService(auth, _Repository());
+    await service.verify();
+    var notifications = 0;
+    final subscription = service.changes.listen((_) => notifications++);
+
+    await service.logout();
+
+    expect(service.profile, isNull);
+    expect(auth.session, isFalse);
+    expect(notifications, 1);
+    await subscription.cancel();
+    await service.dispose();
+    await auth.changes.close();
+  });
+
+  test('logout limpa o perfil mesmo quando o gateway falha', () async {
+    final auth = _Auth()..logoutError = StateError('logout indisponível');
+    final service = SessionService(auth, _Repository());
+    await service.verify();
+
+    await expectLater(service.logout(), throwsStateError);
+
     expect(service.profile, isNull);
     await service.dispose();
     await auth.changes.close();

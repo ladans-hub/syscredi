@@ -131,6 +131,36 @@ void main() {
     expect(jsonDecode(captured.body)['managerEmail'], 'gestor@example.com');
     api.close();
   });
+  test('onboarding público preserva detalhe de conflito do servidor', () async {
+    final api = ApiClient(
+      baseUrl: 'https://api.test/v1',
+      scope: 'registration',
+      store: MemorySecrets(),
+      userId: () => null,
+      accessToken: () async => null,
+      refreshToken: () async {},
+      client: MockClient(
+        (_) async => http.Response(
+          '{"message":"User with this email already exists"}',
+          409,
+        ),
+      ),
+    );
+
+    await expectLater(
+      api.publicWrite('POST', '/organizations/register', {}),
+      throwsA(
+        isA<ApiFailure>()
+            .having((failure) => failure.status, 'status', 409)
+            .having(
+              (failure) => failure.message,
+              'message',
+              contains('already exists'),
+            ),
+      ),
+    );
+    api.close();
+  });
   test('transporte autenticado recusa mutação sem chave idempotente', () async {
     final transport = HttpTransport(
       baseUrl: 'https://api.test/v1',

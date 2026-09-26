@@ -197,10 +197,7 @@ class HttpTransport implements Transport {
         final message = data is Map && data['message'] is String
             ? data['message'] as String
             : 'Não foi possível criar o acesso (${response.statusCode}).';
-        throw ApiFailure(
-          userMessage(message, status: response.statusCode),
-          status: response.statusCode,
-        );
+        throw ApiFailure(message, status: response.statusCode);
       }
       if (data is! Map)
         throw const ApiFailure('Resposta inválida do onboarding.');

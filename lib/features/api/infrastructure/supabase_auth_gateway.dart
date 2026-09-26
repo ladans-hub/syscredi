@@ -2,9 +2,14 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../domain/repository.dart';
 
 class SupabaseAuthGateway implements AuthGateway {
-  SupabaseAuthGateway(this.client, {this.passwordRecoveryUrl});
+  SupabaseAuthGateway(
+    this.client, {
+    this.passwordRecoveryUrl,
+    LocalStorage? localStorage,
+  }) : _localStorage = localStorage;
   final SupabaseClient client;
   final String? passwordRecoveryUrl;
+  final LocalStorage? _localStorage;
   @override
   String? get userId => client.auth.currentUser?.id;
   @override
@@ -128,5 +133,11 @@ class SupabaseAuthGateway implements AuthGateway {
   }
 
   @override
-  Future<void> logout() => client.auth.signOut(scope: SignOutScope.local);
+  Future<void> logout() async {
+    try {
+      await client.auth.signOut(scope: SignOutScope.local);
+    } finally {
+      await _localStorage?.removePersistedSession();
+    }
+  }
 }

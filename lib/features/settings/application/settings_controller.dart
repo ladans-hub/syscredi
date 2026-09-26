@@ -14,9 +14,14 @@ class InstitutionSettingsController extends ChangeNotifier {
   InstitutionSettingsController({
     required this.scope,
     required this.actor,
+    this.organizationName,
     this.repository,
-  });
+  }) {
+    _applyOrganizationNameDefaults(saved);
+    _applyOrganizationNameDefaults(draft);
+  }
   final String scope, actor;
+  final String? organizationName;
   final Repository? repository;
   SettingsData saved = defaultSettings();
   SettingsData draft = defaultSettings();
@@ -36,6 +41,40 @@ class InstitutionSettingsController extends ChangeNotifier {
       .toList();
   void _emit() {
     if (!_disposed) notifyListeners();
+  }
+
+  void _applyOrganizationNameDefaults(SettingsData settings) {
+    final name = organizationName?.trim() ?? '';
+    if (name.isEmpty) return;
+    if (settings['tradeName'] == 'Minha instituição') {
+      settings['tradeName'] = name;
+    }
+    if (settings['legalName'] == 'Minha Instituição, Lda.') {
+      settings['legalName'] = name;
+    }
+    if (settings['accountHolder'] == '') {
+      settings['accountHolder'] = name;
+    }
+  }
+
+  void applyOrganizationName(String name) {
+    final value = name.trim();
+    if (value.isEmpty) return;
+    final oldSaved = saved['tradeName'];
+    final oldDraft = draft['tradeName'];
+    if (oldSaved == 'Minha instituição') saved['tradeName'] = value;
+    if (saved['legalName'] == 'Minha Instituição, Lda.') {
+      saved['legalName'] = value;
+    }
+    if (saved['accountHolder'] == '') saved['accountHolder'] = value;
+    if (oldDraft == 'Minha instituição' || oldDraft == oldSaved) {
+      draft['tradeName'] = value;
+    }
+    if (draft['legalName'] == 'Minha Instituição, Lda.') {
+      draft['legalName'] = value;
+    }
+    if (draft['accountHolder'] == '') draft['accountHolder'] = value;
+    _emit();
   }
 
   Future<void> load() async {
@@ -71,6 +110,7 @@ class InstitutionSettingsController extends ChangeNotifier {
         }
         saved = normalizeSettings(remote);
       }
+      _applyOrganizationNameDefaults(saved);
       draft = copySettings(saved);
       final last = prefs.getString('$_key.category');
       if (saved['rememberCategory'] == true &&

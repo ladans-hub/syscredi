@@ -5,9 +5,12 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/config.dart';
 import '../../features/api/application/session_service.dart';
 import '../../features/api/domain/repository.dart';
-import '../../features/api/infrastructure/supabase_auth_gateway.dart';
+import '../../features/api/infrastructure/empty_account_repository.dart';
 import '../../features/api/infrastructure/guest_repository.dart';
+import '../../features/api/infrastructure/supabase_auth_gateway.dart';
 import '../../features/api/presentation/session_view_model.dart';
+
+const demoAccountEmail = 'ladans.me@gmail.com';
 
 Future<AppSession> connectAuthOnly() async {
   final config = AppConfig.environment;
@@ -20,28 +23,57 @@ Future<AppSession> connectAuthOnly() async {
     Supabase.instance.client,
     passwordRecoveryUrl: config.effectivePasswordRecoveryUrl,
   );
+  final emptyRepository = EmptyAccountRepository(() => _profile(auth));
+  final repository = _AuthOnlyRepository(
+    auth: auth,
+    emptyRepository: emptyRepository,
+  );
   final session = SessionService(
     auth,
-    _MockRepository(auth),
+    repository,
     guestRepository: const GuestRepository(),
   );
   await session.restore();
   return AppSession(session);
 }
 
-class _MockRepository implements Repository {
-  _MockRepository(this.auth);
+Json _profile(SupabaseAuthGateway auth) {
+  final user = auth.client.auth.currentUser;
+  return {
+    'id': auth.userId ?? 'session-user',
+    'name': user?.userMetadata?['name'] ?? 'Utilizador',
+    'email': user?.email ?? '',
+    'organization_name': user?.userMetadata?['organization_name'] ?? '',
+    'role': 'manager',
+    'active': true,
+  };
+}
+
+bool isDemoAccount(String? email) =>
+    email?.trim().toLowerCase() == demoAccountEmail;
+
+class _AuthOnlyRepository implements Repository {
+  const _AuthOnlyRepository({
+    required this.auth,
+    required this.emptyRepository,
+  });
+
   final SupabaseAuthGateway auth;
+  final EmptyAccountRepository emptyRepository;
+
+  bool get _demo => isDemoAccount(auth.client.auth.currentUser?.email);
 
   @override
   Future<dynamic> get(String path) async {
-    if (Uri.parse(path).path == '/risk-scores') {
+    if (!_demo) return emptyRepository.get(path);
+    final uri = Uri.parse(path);
+    if (uri.path == '/risk-scores') {
       return [
         for (final (index, item) in <(String, int, int, String, bool)>[
           ('Adelino Armando de Sousa', 564000, 0, 'Baixo', false),
           ('Júlio Custódio', 1820000, 45, 'Alto', false),
           ('Elisabete Celeste Luis Piwalo', 750000, 18, 'Moderado', true),
-          ('Armando Manuel Antonio Munhangane', 1250000, 8, 'Moderado', false),
+          ('Armando Manuel Antonio Munhangange', 1250000, 8, 'Moderado', false),
           ('Francisco Adelino Rui', 980000, 96, 'Alto', false),
           ('Celeste António', 2100000, 65, 'Alto', true),
           ('Ana Maria João', 1600000, 0, 'Baixo', false),
@@ -61,62 +93,19 @@ class _MockRepository implements Repository {
           },
       ];
     }
-    if (Uri.parse(path).path == '/audit') {
-      const naveia = 'Naveia Muaquiua João';
-      const loide = 'Loide Janeth Ligia Salvado Roque de Aguiar';
-      const events = [
-        [
-          'receber',
-          'Reembolsou um crédito',
-          '18:42:38',
-          naveia,
-          '303',
-          'ADELINO ARMANDO DE SOUSA',
-        ],
-        [
-          'emprestimos_simulados',
-          'Inserção',
-          '18:11:45',
-          naveia,
-          '1',
-          'Simulação',
-        ],
-        ['usuarios', 'Login', '18:07:29', naveia, '0', 'Login'],
-        ['usuarios', 'Logout', '18:07:26', naveia, '0', 'Logout'],
-        ['usuarios', 'Login', '17:56:07', naveia, '0', 'Login'],
-        ['usuarios', 'Logout', '17:55:57', loide, '0', 'Logout'],
-        [
-          'emprestimos',
-          'Submissão',
-          '17:55:40',
-          loide,
-          '303',
-          'CRÉDITO: 303 para aprovação',
-        ],
-        ['usuarios', 'Login', '17:54:29', loide, '0', 'Login'],
-        ['usuarios', 'Logout', '17:54:24', naveia, '0', 'Logout'],
-        [
-          'emprestimos',
-          'Iniciou um crédito',
-          '17:37:26',
-          naveia,
-          '303',
-          'CRÉDITO: 303 · CLIENTE: ADELINO ARMANDO DE SOUSA',
-        ],
-      ];
-      return [
-        for (final e in events)
-          {
-            'table': e[0],
-            'action': e[1],
-            'created_at': '2026-09-11T${e[2]}',
-            'actor_name': e[3],
-            'entity_id': e[4],
-            'description': e[5],
-          },
+    if (uri.path == '/audit') {
+      return const <Json>[
+        {
+          'table': 'usuarios',
+          'action': 'Login',
+          'created_at': '2026-09-11T18:07:29',
+          'actor_name': 'Naveia Muaquiua João',
+          'entity_id': '0',
+          'description': 'Login',
+        },
       ];
     }
-    if (path == '/dashboard') {
+    if (uri.path == '/dashboard') {
       return {
         'clients': 248,
         'pending_requests': 18,
@@ -127,31 +116,12 @@ class _MockRepository implements Repository {
         'monthly_revenue': [42, 48, 44, 58, 62, 70, 76, 82, 78, 91, 96, 104],
       };
     }
-    return {
-      'id': auth.userId ?? 'session-user',
-      'name':
-          auth.client.auth.currentUser?.userMetadata?['name'] ?? 'Utilizador',
-      'email': auth.client.auth.currentUser?.email ?? '',
-      'role': 'manager',
-      'active': true,
-    };
+    return emptyRepository.get(path);
   }
 
   @override
-  Future<List<Json>> page(
-    String path, {
-    int offset = 0,
-    int limit = 50,
-  }) async => [];
-  @override
-  Future<List<PendingWrite>> pending() async => [];
-  @override
-  Future<Uint8List> bytes(String path) async => Uint8List(0);
-  @override
-  Future<dynamic> write(String method, String path, Json body) async => {};
-  @override
   Future<dynamic> publicWrite(String method, String path, Json body) async {
-    if (path != '/organizations/register') return {};
+    if (path != '/organizations/register') return <String, dynamic>{};
     final result = await auth.client.auth.signUp(
       email: '${body['managerEmail']}'.trim(),
       password: '${body['password']}',
@@ -176,9 +146,27 @@ class _MockRepository implements Repository {
   }
 
   @override
-  Future<dynamic> retry(PendingWrite operation) async => {};
+  Future<Uint8List> bytes(String path) => emptyRepository.bytes(path);
+
   @override
-  Future<String> cancel(PendingWrite operation) async => operation.key;
+  Future<String> cancel(PendingWrite operation) =>
+      emptyRepository.cancel(operation);
+
   @override
-  void close() {}
+  void close() => emptyRepository.close();
+
+  @override
+  Future<List<Json>> page(String path, {int offset = 0, int limit = 50}) =>
+      emptyRepository.page(path, offset: offset, limit: limit);
+
+  @override
+  Future<List<PendingWrite>> pending() => emptyRepository.pending();
+
+  @override
+  Future<dynamic> retry(PendingWrite operation) =>
+      emptyRepository.retry(operation);
+
+  @override
+  Future<dynamic> write(String method, String path, Json body) =>
+      emptyRepository.write(method, path, body);
 }

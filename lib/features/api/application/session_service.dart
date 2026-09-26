@@ -106,11 +106,14 @@ class SessionService {
       });
     } on ApiFailure catch (error) {
       final detail = error.message.toLowerCase();
-      if (detail.contains('already') ||
-          detail.contains('registered') ||
-          detail.contains('already registered')) {
+      final emailConflict =
+          detail.contains('email') ||
+          detail.contains('user with this email') ||
+          detail.contains('email address') ||
+          detail.contains('already been registered');
+      if (error.status == 409 && emailConflict) {
         throw const ApiFailure(
-          'Este email já possui uma conta de acesso. Entre com essa conta ou utilize outro email profissional.',
+          'Este email já possui uma conta de acesso. Entre com essa conta ou use “Esqueci a palavra-passe” para recuperar o acesso.',
           status: 409,
         );
       }
@@ -161,9 +164,21 @@ class SessionService {
   }
 
   Future<void> logout() async {
-    if (profile?['guest'] != true) await auth.logout();
+    Object? logoutError;
+    StackTrace? logoutStackTrace;
+    if (profile?['guest'] != true) {
+      try {
+        await auth.logout();
+      } catch (error, stackTrace) {
+        logoutError = error;
+        logoutStackTrace = stackTrace;
+      }
+    }
     profile = null;
     _changes.add(null);
+    if (logoutError != null) {
+      Error.throwWithStackTrace(logoutError, logoutStackTrace!);
+    }
   }
 
   Future<void> dispose() async {

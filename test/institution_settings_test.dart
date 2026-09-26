@@ -73,7 +73,7 @@ void main() {
       final envelope = {'version': 1, 'settings': defaultSettings()};
       expect(
         InstitutionSettingsController.validateImport(envelope)['nuit'],
-        '400123456',
+        '000000000',
       );
       (envelope['settings'] as Map)['nuit'] = '12';
       expect(

@@ -527,6 +527,8 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       scope:
           '${widget.session.profile?['organization_id'] ?? widget.session.profile?['id'] ?? 'demo'}',
       actor: '${widget.session.profile?['name'] ?? 'Gestor'}',
+      organizationName:
+          '${widget.session.profile?['organization_name'] ?? widget.session.profile?['organizationName'] ?? ''}',
       repository: api,
     );
     institutionSettings.load().then((_) {
@@ -683,7 +685,11 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         orElse: () => const {},
       );
       final name = '${current['name'] ?? ''}'.trim();
-      if (mounted && name.isNotEmpty) setState(() => organizationName = name);
+      if (mounted && name.isNotEmpty) {
+        setState(() => organizationName = name);
+        institutionSettings.applyOrganizationName(name);
+        applyInstitutionSettings(institutionSettings.saved);
+      }
     } catch (_) {
       // The profile menu falls back to a neutral label, never to an ID.
     }

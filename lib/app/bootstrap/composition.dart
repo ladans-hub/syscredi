@@ -19,14 +19,15 @@ Future<AppSession> connect(AppConfig config) async {
   if (problem != null) throw StateError(problem);
   const storage = DeviceSecretStore();
   const operationalStorage = DeviceOperationalStore();
+  final authStorage = SecureAuthStorage(
+    storage,
+    'syscredi.${config.scope}.session',
+  );
   await Supabase.initialize(
     url: config.supabaseUrl,
     publishableKey: config.publishableKey,
     authOptions: FlutterAuthClientOptions(
-      localStorage: SecureAuthStorage(
-        storage,
-        'syscredi.${config.scope}.session',
-      ),
+      localStorage: authStorage,
       pkceAsyncStorage: SecurePkceStorage(storage, config.scope),
       detectSessionInUri: true,
     ),
@@ -34,6 +35,7 @@ Future<AppSession> connect(AppConfig config) async {
   final auth = SupabaseAuthGateway(
     Supabase.instance.client,
     passwordRecoveryUrl: config.effectivePasswordRecoveryUrl,
+    localStorage: authStorage,
   );
   final repository = ApiClient(
     baseUrl: config.apiUrl,
