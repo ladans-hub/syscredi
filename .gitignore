@@ -49,3 +49,5 @@ config/remote.json
 base/
 .vercel
 tmp/
+apps/
+build/
