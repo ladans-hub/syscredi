@@ -33,7 +33,7 @@ jobs:
           with open('defines.json', 'w') as f:
               json.dump({k: os.environ.get(k, '') for k in ('GOOGLE_ANDROID_CLIENT_ID', 'GOOGLE_SERVER_CLIENT_ID')}, f)
           PY
-      - run: flutter build apk --release --dart-define-from-file=defines.json
+      - run: flutter build apk --release --dart-define=DATA_LAYER_ENABLED=true --dart-define-from-file=defines.json
       - uses: actions/upload-artifact@v4
         with:
           name: Syscredi-Android-release
@@ -62,8 +62,8 @@ jobs:
           with open('defines.json', 'w') as f:
               json.dump({k: os.environ.get(k, '') for k in keys}, f)
           PY
-      - run: flutter build ios --debug --no-codesign --dart-define-from-file=defines.json
-      - run: flutter build macos --debug --dart-define-from-file=defines.json
+      - run: flutter build ios --debug --no-codesign --dart-define=DATA_LAYER_ENABLED=true --dart-define-from-file=defines.json
+      - run: flutter build macos --debug --dart-define=DATA_LAYER_ENABLED=true --dart-define-from-file=defines.json
 
   windows:
     runs-on: windows-latest
@@ -85,7 +85,7 @@ jobs:
             GOOGLE_DESKTOP_CLIENT_ID = $env:GOOGLE_DESKTOP_CLIENT_ID
             GOOGLE_DESKTOP_CLIENT_SECRET = $env:GOOGLE_DESKTOP_CLIENT_SECRET
           } | ConvertTo-Json | Set-Content -Path defines.json -Encoding UTF8
-      - run: flutter build windows --release --dart-define-from-file=defines.json
+      - run: flutter build windows --release --dart-define=DATA_LAYER_ENABLED=true --dart-define-from-file=defines.json
       - name: Package Windows release
         shell: pwsh
         run: |
